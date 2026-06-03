@@ -86,6 +86,24 @@ class GlassButtonCard extends HTMLElement {
     return ACTIVE_STATES.includes(st.state);
   }
 
+  _isThresholdExceeded() {
+    if (this._config.threshold === undefined || this._config.threshold === null || this._config.threshold === '') return false;
+    const st = this._entityState();
+    if (!st) return false;
+    const val = parseFloat(st.state);
+    if (isNaN(val)) return false;
+    const op  = this._config.threshold_operator || '>=';
+    const thr = parseFloat(this._config.threshold);
+    switch (op) {
+      case '>=': return val >= thr;
+      case '>':  return val >  thr;
+      case '<=': return val <= thr;
+      case '<':  return val <  thr;
+      case '==': return val === thr;
+      default:   return val >= thr;
+    }
+  }
+
   _isUnavailable() {
     const st = this._entityState();
     return st && (st.state === 'unavailable' || st.state === 'unknown');
@@ -97,7 +115,7 @@ class GlassButtonCard extends HTMLElement {
   }
 
   _currentIcon() {
-    const active = this._isActive();
+    const active = this._isActive() || this._isThresholdExceeded();
     if (active && this._config.icon_active) return this._config.icon_active;
     if (!active && this._config.icon_inactive) return this._config.icon_inactive;
     return this._config.icon || getDomainIcon(this._config.entity);
@@ -247,9 +265,13 @@ class GlassButtonCard extends HTMLElement {
 
   _render() {
     if (!this._hass) return;
-    const active      = this._isActive();
-    const unavailable = this._isUnavailable();
-    const color       = this._config.active_color || '#ffd54f';
+    const activeState         = this._isActive();
+    const thresholdExceeded   = this._isThresholdExceeded();
+    const active              = activeState || thresholdExceeded;
+    const unavailable         = this._isUnavailable();
+    const color               = thresholdExceeded
+      ? (this._config.threshold_color || '#FF6B35')
+      : (this._config.active_color    || '#ffd54f');
     const glow        = this._config.glow_intensity || 12;
     const icon        = this._currentIcon();
     const name        = this._config.name || (this._entityState()?.attributes.friendly_name) || '';
@@ -672,6 +694,25 @@ class GlassButtonCardEditor extends HTMLElement {
         <div class="field" id="iconContainer"></div>
         <div class="field" id="iconActiveContainer"></div>
 
+        <div class="section">Schwellenwert-Leuchten</div>
+        <div class="hint" style="margin-bottom:4px;">Leuchtet in einer eigenen Farbe wenn der Entitätswert eine Bedingung erfüllt – z.B. Temperatur über 25°C oder Verbrauch über 2000 W.</div>
+        <div class="row">
+          <div class="field">
+            <label>Operator</label>
+            <select id="threshold_operator">
+              ${[['>=','≥  (größer gleich)'],['>', '>  (größer als)'],['<=','≤  (kleiner gleich)'],['<', '<  (kleiner als)'],['==','=  (gleich)']].map(([v,l])=>`<option value="${v}" ${(c.threshold_operator||'>=')===v?'selected':''}>${l}</option>`).join('')}
+            </select>
+          </div>
+          <div class="field">
+            <label>Schwellenwert</label>
+            <input type="number" id="threshold" value="${c.threshold??''}" step="any" placeholder="z.B. 25" />
+          </div>
+        </div>
+        <div class="field">
+          <label>Leuchtfarbe bei Überschreitung</label>
+          <input type="color" id="threshold_color" value="${c.threshold_color||'#FF6B35'}" />
+        </div>
+
         <div class="section">Aktion bei Tippen</div>
         <div class="field">
           <label>Was soll passieren?</label>
@@ -728,6 +769,17 @@ class GlassButtonCardEditor extends HTMLElement {
     on('name_size', 'name_size', 'change', v => parseInt(v));
     on('state_size', 'state_size', 'change', v => parseInt(v));
     on('border_radius', 'border_radius', 'change', v => parseInt(v));
+    on('threshold_operator', 'threshold_operator');
+    on('threshold_color', 'threshold_color');
+
+    // Schwellenwert: leer = entfernen
+    const thrEl = root.getElementById('threshold');
+    if (thrEl) thrEl.addEventListener('change', e => {
+      const v = e.target.value.trim();
+      const cfg = { ...this._config };
+      if (v === '') { delete cfg.threshold; } else { cfg.threshold = parseFloat(v); }
+      this._config = cfg; this._emit();
+    });
 
     // Höhe & Breite: leer = Wert entfernen (automatisch)
     const dimHandler = (id, key) => {
