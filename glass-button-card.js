@@ -117,7 +117,10 @@ class GlassButtonCard extends HTMLElement {
   }
 
   _handleTap() { this._performAction(this._config.tap_action || { action: 'toggle' }); }
-  _handleHold() { if (this._config.hold_action) this._performAction(this._config.hold_action); }
+  _handleHold() {
+    const a = this._config.hold_action;
+    if (a && a.action !== 'none') this._performAction(a);
+  }
 
   _performAction(action) {
     switch (action.action) {
@@ -349,7 +352,7 @@ class GlassButtonCard extends HTMLElement {
       this._handleTap();
     });
 
-    if (this._config.hold_action) {
+    if (this._config.hold_action && this._config.hold_action.action !== 'none') {
       const start  = () => { held=false; holdTimer=setTimeout(()=>{held=true;this._handleHold();},500); };
       const cancel = () => clearTimeout(holdTimer);
       btn.addEventListener('mousedown', start);
@@ -555,7 +558,8 @@ class GlassButtonCardEditor extends HTMLElement {
     this._rendered = true;
     const root = this.shadowRoot;
     const c = this._config;
-    const tapAction = c.tap_action?.action || 'toggle';
+    const tapAction  = c.tap_action?.action  || 'toggle';
+    const holdAction = c.hold_action?.action || 'none';
     const glowOn = c.glow !== false;
 
     const designs = [['glass','Glas'],['solid','Vollfläche'],['outline','Umrandet'],['minimal','Minimal']];
@@ -675,9 +679,21 @@ class GlassButtonCardEditor extends HTMLElement {
             ${actions.map(([v,l])=>`<option value="${v}" ${tapAction===v?'selected':''}>${l}</option>`).join('')}
           </select>
         </div>
-        ${tapAction==='navigate'?`<div class="field"><label>Navigationspfad</label><input type="text" id="nav_path" value="${c.tap_action?.navigation_path||''}" placeholder="/lovelace/meinzimmer" /></div>`:''}
-        ${tapAction==='call-service'?`<div class="field"><label>Dienst</label><input type="text" id="svc" value="${c.tap_action?.service||''}" placeholder="script.mein_script" /><span class="hint">Format: domain.dienst</span></div>`:''}
-        ${tapAction==='url'?`<div class="field"><label>URL</label><input type="text" id="url_path" value="${c.tap_action?.url_path||''}" placeholder="https://..." /></div>`:''}
+        ${tapAction==='navigate'   ? `<div class="field"><label>Navigationspfad</label><input type="text" id="nav_path" value="${c.tap_action?.navigation_path||''}" placeholder="/lovelace/meinzimmer" /></div>` : ''}
+        ${tapAction==='call-service'? `<div class="field"><label>Dienst</label><input type="text" id="svc" value="${c.tap_action?.service||''}" placeholder="script.mein_script" /><span class="hint">Format: domain.dienst</span></div>` : ''}
+        ${tapAction==='url'         ? `<div class="field"><label>URL</label><input type="text" id="url_path" value="${c.tap_action?.url_path||''}" placeholder="https://..." /></div>` : ''}
+
+        <div class="section">Aktion bei Gedrückt halten</div>
+        <div class="field">
+          <label>Was soll passieren?</label>
+          <select id="hold_type">
+            ${actions.map(([v,l])=>`<option value="${v}" ${holdAction===v?'selected':''}>${l}</option>`).join('')}
+          </select>
+        </div>
+        ${holdAction==='navigate'    ? `<div class="field"><label>Navigationspfad</label><input type="text" id="hold_nav_path" value="${c.hold_action?.navigation_path||''}" placeholder="/lovelace/meinzimmer" /></div>` : ''}
+        ${holdAction==='call-service'? `<div class="field"><label>Dienst</label><input type="text" id="hold_svc" value="${c.hold_action?.service||''}" placeholder="script.mein_script" /><span class="hint">Format: domain.dienst</span></div>` : ''}
+        ${holdAction==='url'         ? `<div class="field"><label>URL</label><input type="text" id="hold_url_path" value="${c.hold_action?.url_path||''}" placeholder="https://..." /></div>` : ''}
+        ${holdAction==='more-info'   ? `<div class="field"><span class="hint">Öffnet das Info-Fenster der konfigurierten Entität.</span></div>` : ''}
       </div>
     `;
 
@@ -760,6 +776,16 @@ class GlassButtonCardEditor extends HTMLElement {
     if (svc) svc.addEventListener('change', e => this._updateAction('tap_action','service',e.target.value));
     const urlPath = root.getElementById('url_path');
     if (urlPath) urlPath.addEventListener('change', e => this._updateAction('tap_action','url_path',e.target.value));
+
+    const holdType = root.getElementById('hold_type');
+    if (holdType) holdType.addEventListener('change', e => this._setActionType('hold_action', e.target.value));
+
+    const holdNavPath = root.getElementById('hold_nav_path');
+    if (holdNavPath) holdNavPath.addEventListener('change', e => this._updateAction('hold_action','navigation_path',e.target.value));
+    const holdSvc = root.getElementById('hold_svc');
+    if (holdSvc) holdSvc.addEventListener('change', e => this._updateAction('hold_action','service',e.target.value));
+    const holdUrlPath = root.getElementById('hold_url_path');
+    if (holdUrlPath) holdUrlPath.addEventListener('change', e => this._updateAction('hold_action','url_path',e.target.value));
   }
 }
 
