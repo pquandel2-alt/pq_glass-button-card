@@ -58,10 +58,49 @@ class GlassButtonCard extends HTMLElement {
   _displayState() {
     const st = this._entityState();
     if (!st) return '';
-    // Übersetzte/formatierte Anzeige über HA-Formatierung wenn möglich
-    const val = st.state;
+
+    // 1. Bevorzugt: HA-eigene Übersetzung (respektiert die eingestellte Sprache)
+    if (this._hass.formatEntityState) {
+      try {
+        const formatted = this._hass.formatEntityState(st);
+        if (formatted) return formatted;
+      } catch (e) { /* Fallback unten */ }
+    }
+
+    const val  = st.state;
     const unit = st.attributes.unit_of_measurement || '';
-    return unit ? `${val} ${unit}` : val;
+
+    // 2. Wenn es ein Zahlenwert ist: einfach mit Einheit anzeigen
+    if (!isNaN(parseFloat(val)) && isFinite(val)) {
+      return unit ? `${val} ${unit}` : `${val}`;
+    }
+
+    // 3. Eigene deutsche Übersetzungstabelle als Fallback
+    const map = {
+      on: 'An', off: 'Aus',
+      open: 'Offen', closed: 'Geschlossen', opening: 'Öffnet', closing: 'Schließt',
+      home: 'Zuhause', not_home: 'Abwesend',
+      locked: 'Verriegelt', unlocked: 'Entriegelt',
+      detected: 'Erkannt', clear: 'Frei',
+      idle: 'Bereit', playing: 'Spielt', paused: 'Pausiert', buffering: 'Puffert',
+      standby: 'Standby',
+      cleaning: 'Reinigt', docked: 'In Station', returning: 'Kehrt zurück',
+      error: 'Fehler', paused_vacuum: 'Pausiert',
+      heat: 'Heizen', cool: 'Kühlen', auto: 'Auto', heat_cool: 'Auto',
+      dry: 'Trocknen', fan_only: 'Nur Lüfter',
+      active: 'Aktiv', inactive: 'Inaktiv',
+      unavailable: 'Nicht verfügbar', unknown: 'Unbekannt',
+      charging: 'Lädt', discharging: 'Entlädt', full: 'Voll',
+      present: 'Anwesend', absent: 'Abwesend',
+      armed_home: 'Aktiv (zuhause)', armed_away: 'Aktiv (abwesend)',
+      armed_night: 'Aktiv (Nacht)', disarmed: 'Deaktiviert',
+      triggered: 'Ausgelöst', pending: 'Verzögert', arming: 'Wird aktiviert',
+      wet: 'Nass', moist: 'Feucht', motion: 'Bewegung', no_motion: 'Keine Bewegung',
+    };
+
+    const translated = map[val.toLowerCase ? val.toLowerCase() : val];
+    const out = translated || val;
+    return unit ? `${out} ${unit}` : out;
   }
 
   // ----- Aktionen ------------------------------------------------------
