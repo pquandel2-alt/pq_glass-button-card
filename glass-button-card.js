@@ -267,16 +267,17 @@ class GlassButtonCard extends HTMLElement {
       <style>
         :host {
           display: block;
-          ${this._config.width ? `width:${this._config.width}px; margin:0 auto;` : ''}
-          overflow: hidden;
+          box-sizing: border-box;
+          ${this._config.height ? `height:${this._config.height}px;` : ''}
         }
         .btn {
           ${this._cardCSS(active, unavailable, color, glow)}
           border-radius: ${this._config.border_radius || 16}px;
           padding: ${this._config.height ? '0' : '14px 10px'};
-          ${this._config.height ? `height:${this._config.height}px;` : ''}
-          ${this._config.width ? `width:${this._config.width}px;` : 'width:100%;'}
+          ${this._config.height ? 'height:100%;' : ''}
+          width: ${this._config.width ? `min(${this._config.width}px, 100%)` : '100%'};
           max-width: 100%;
+          margin: 0 auto;
           display: flex;
           flex-direction: column;
           align-items: center;
