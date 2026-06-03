@@ -8,10 +8,11 @@ Eine hochgradig konfigurierbare Button-Card für Home Assistant im modernen Glas
 - **4 Designs** – Glas, Vollfläche, Umrandet, Minimal
 - **Einstellbare Leuchtkraft** – Glow-Effekt an/aus und Intensität per Regler
 - **Frei wählbare Aktion** – Ein-/Ausschalten, zu Seite navigieren, Info-Fenster öffnen, Dienst auslösen oder Webseite öffnen
+- **Hold-Aktion** – eigene Aktion bei langem Drücken, im Editor einstellbar
 - **Zustandsabhängige Icons** – eigenes Icon für aktiven Zustand, wechselt automatisch wenn die Entität an/offen/aktiv ist
 - **Anpassbare Aktiv-Farbe** – Button, Icon und Glow nehmen deine Wunschfarbe an
+- **Schwellenwert-Leuchten** – leuchtet in eigener Farbe wenn ein Messwert eine Bedingung erfüllt (z.B. Temperatur > 25°C)
 - **Optionale Anzeige** von Name und Zustand/Wert
-- **Hold-Aktion** möglich (per YAML)
 
 ## 📦 Installation
 
@@ -75,6 +76,9 @@ tap_action:
 | `border_radius` | number | `16` | Eckenradius in px |
 | `tap_action` | object | `{action: toggle}` | Aktion bei Tippen |
 | `hold_action` | object | – | Aktion bei langem Drücken |
+| `threshold` | number | – | Schwellenwert für Leuchten (z.B. `25`) |
+| `threshold_operator` | string | `>=` | Vergleichsoperator: `>=` `>` `<=` `<` `==` |
+| `threshold_color` | string | `#FF6B35` | Leuchtfarbe bei Schwellenwert-Überschreitung |
 
 ### Aktions-Typen
 
@@ -103,6 +107,24 @@ tap_action:
 tap_action:
   action: url
   url_path: https://...
+```
+
+### Schwellenwert-Leuchten
+
+Leuchtet in einer eigenen Farbe sobald der Messwert der Entität eine Bedingung erfüllt. Nützlich z.B. für Temperatursensoren, Stromverbrauch oder CO₂-Werte. Der Schwellenwert hat Vorrang vor der normalen Aktiv-Farbe.
+
+```yaml
+# Leuchtet orange wenn Temperatur 25°C oder mehr erreicht
+entity: sensor.temperatur_wohnzimmer
+threshold: 25
+threshold_operator: ">="
+threshold_color: "#FF6B35"
+
+# Leuchtet rot wenn Verbrauch über 2000 W
+entity: sensor.stromverbrauch
+threshold: 2000
+threshold_operator: ">"
+threshold_color: "#F44336"
 ```
 
 ## 🎨 Designs
