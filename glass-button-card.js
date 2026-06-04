@@ -1,5 +1,5 @@
 // =====================================================================
-//  Glass Button Card v1.3.2
+//  Glass Button Card v1.3.3
 // =====================================================================
 
 const ACTIVE_STATES = [
@@ -1120,6 +1120,15 @@ class GlassButtonCardEditor extends HTMLElement {
     }
   }
 
+  _mkMoveBtn(label, disabled, onClick) {
+    const btn = document.createElement('button');
+    btn.textContent = label;
+    btn.disabled = disabled;
+    btn.style.cssText = `width:22px;height:18px;padding:0;border:1px solid var(--divider-color,#ddd);border-radius:4px;background:var(--card-background-color,#fff);cursor:${disabled?'default':'pointer'};font-size:9px;opacity:${disabled?'0.3':'0.8'};display:flex;align-items:center;justify-content:center;`;
+    if (!disabled) btn.addEventListener('click', onClick);
+    return btn;
+  }
+
   _buildPopupEntityList(container) {
     if (!container) return;
     container.innerHTML = '';
@@ -1137,14 +1146,33 @@ class GlassButtonCardEditor extends HTMLElement {
       const entityId = typeof item === 'string' ? item : (item.entity || '');
 
       const row = document.createElement('div');
-      row.style.cssText = 'display:flex;align-items:flex-start;gap:8px;margin-bottom:8px;';
+      row.style.cssText = 'display:flex;align-items:flex-start;gap:5px;margin-bottom:8px;';
+
+      const moveWrap = document.createElement('div');
+      moveWrap.style.cssText = 'display:flex;flex-direction:column;gap:2px;flex-shrink:0;margin-top:1px;';
+      const upBtn = this._mkMoveBtn('▲', idx === 0, () => {
+        const arr = [...(this._config.popup_entities || [])];
+        [arr[idx - 1], arr[idx]] = [arr[idx], arr[idx - 1]];
+        this._config = { ...this._config, popup_entities: arr };
+        this._emit();
+        this._buildPopupEntityList(container);
+      });
+      const downBtn = this._mkMoveBtn('▼', idx === entities.length - 1, () => {
+        const arr = [...(this._config.popup_entities || [])];
+        [arr[idx], arr[idx + 1]] = [arr[idx + 1], arr[idx]];
+        this._config = { ...this._config, popup_entities: arr };
+        this._emit();
+        this._buildPopupEntityList(container);
+      });
+      moveWrap.appendChild(upBtn);
+      moveWrap.appendChild(downBtn);
 
       const pickerDiv = document.createElement('div');
       pickerDiv.style.cssText = 'flex:1;';
 
       const removeBtn = document.createElement('button');
       removeBtn.textContent = '×';
-      removeBtn.style.cssText = 'flex-shrink:0;width:36px;height:38px;background:rgba(200,60,60,0.1);border:1px solid rgba(200,60,60,0.3);border-radius:8px;color:rgb(180,40,40);cursor:pointer;font-size:18px;display:flex;align-items:center;justify-content:center;padding:0;';
+      removeBtn.style.cssText = 'flex-shrink:0;width:32px;height:32px;background:rgba(200,60,60,0.1);border:1px solid rgba(200,60,60,0.3);border-radius:6px;color:rgb(180,40,40);cursor:pointer;font-size:16px;display:flex;align-items:center;justify-content:center;padding:0;';
       removeBtn.addEventListener('click', () => {
         const arr = [...(this._config.popup_entities || [])];
         arr.splice(idx, 1);
@@ -1153,6 +1181,7 @@ class GlassButtonCardEditor extends HTMLElement {
         this._buildPopupEntityList(container);
       });
 
+      row.appendChild(moveWrap);
       row.appendChild(pickerDiv);
       row.appendChild(removeBtn);
       container.appendChild(row);
