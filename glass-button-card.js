@@ -1,5 +1,5 @@
 // =====================================================================
-//  Glass Button Card v1.2.0
+//  Glass Button Card v1.3.0
 // =====================================================================
 
 const ACTIVE_STATES = [
@@ -29,7 +29,6 @@ const STATE_MAP_DE = {
   wet:'Nass', moist:'Feucht',
 };
 
-// Standard-Icons pro Domain
 const DOMAIN_ICONS = {
   light: 'mdi:lightbulb', switch: 'mdi:toggle-switch', sensor: 'mdi:eye',
   binary_sensor: 'mdi:radiobox-marked', climate: 'mdi:thermostat',
@@ -63,6 +62,8 @@ class GlassButtonCard extends HTMLElement {
     this.attachShadow({ mode: 'open' });
     this._config = {};
     this._lastRenderKey = null;
+    this._popupEl = null;
+    this._popupOpen = false;
   }
 
   setConfig(config) {
@@ -78,7 +79,14 @@ class GlassButtonCard extends HTMLElement {
     };
   }
 
-  set hass(hass) { this._hass = hass; this._render(); }
+  set hass(hass) {
+    this._hass = hass;
+    if (this._popupOpen) {
+      this._refreshPopupControls();
+    } else {
+      this._render();
+    }
+  }
 
   _isActive() {
     const st = this._entityState();
@@ -134,8 +142,17 @@ class GlassButtonCard extends HTMLElement {
     return unit ? `${t||val} ${unit}` : (t||val);
   }
 
-  _handleTap() { this._performAction(this._config.tap_action || { action: 'toggle' }); }
+  _handleTap() {
+    if (this._config.popup_enabled && (this._config.popup_trigger || 'tap') === 'tap') {
+      this._openPopup(); return;
+    }
+    this._performAction(this._config.tap_action || { action: 'toggle' });
+  }
+
   _handleHold() {
+    if (this._config.popup_enabled && this._config.popup_trigger === 'hold') {
+      this._openPopup(); return;
+    }
     const a = this._config.hold_action;
     if (a && a.action !== 'none') this._performAction(a);
   }
@@ -177,6 +194,235 @@ class GlassButtonCard extends HTMLElement {
     this.dispatchEvent(e);
   }
 
+  // ---- Popup ----
+
+  _openPopup() {
+    this._popupOpen = true;
+    if (!this._popupEl) {
+      this._popupEl = document.createElement('div');
+      this.shadowRoot.appendChild(this._popupEl);
+    } else if (!this.shadowRoot.contains(this._popupEl)) {
+      this.shadowRoot.appendChild(this._popupEl);
+    }
+    this._popupEl.style.cssText = 'position:fixed;inset:0;z-index:9999;display:flex;align-items:flex-end;justify-content:center;';
+    this._buildPopupContent();
+  }
+
+  _closePopup() {
+    this._popupOpen = false;
+    if (this._popupEl) this._popupEl.style.display = 'none';
+    this._lastRenderKey = null;
+    this._render();
+  }
+
+  _ensurePopup() {
+    if (!this._popupEl) return;
+    if (!this.shadowRoot.contains(this._popupEl)) {
+      this.shadowRoot.appendChild(this._popupEl);
+    }
+    this._popupEl.style.cssText = `position:fixed;inset:0;z-index:9999;display:${this._popupOpen ? 'flex' : 'none'};align-items:flex-end;justify-content:center;`;
+  }
+
+  _refreshPopupControls() {
+    if (!this._popupEl || !this._hass) return;
+    (this._config.popup_entities || []).forEach(item => {
+      const entityId = typeof item === 'string' ? item : item.entity;
+      if (!entityId) return;
+      const st = this._hass.states[entityId];
+      if (!st) return;
+      const domain = entityId.split('.')[0];
+      if (['switch', 'input_boolean', 'light'].includes(domain)) {
+        const cb = this._popupEl.querySelector(`[data-entity="${entityId}"][data-control="toggle"]`);
+        if (cb) cb.checked = st.state === 'on';
+      } else if (['input_number', 'number'].includes(domain)) {
+        const slider = this._popupEl.querySelector(`[data-entity="${entityId}"][data-control="number"]`);
+        if (slider) slider.value = parseFloat(st.state);
+        const valEl = this._popupEl.querySelector(`[data-val="${entityId}"]`);
+        if (valEl) {
+          const unit = st.attributes.unit_of_measurement || '';
+          valEl.textContent = `${parseFloat(st.state)}${unit ? ' '+unit : ''}`;
+        }
+      } else if (['input_select', 'select'].includes(domain)) {
+        const sel = this._popupEl.querySelector(`[data-entity="${entityId}"][data-control="select"]`);
+        if (sel) sel.value = st.state;
+      }
+    });
+  }
+
+  _buildPopupContent() {
+    const c = this._config;
+    const hass = this._hass;
+    const entities = c.popup_entities || [];
+    const cardName = c.name || (this._entityState()?.attributes.friendly_name) || 'Steuerung';
+
+    let rows = '';
+    entities.forEach(item => {
+      const entityId = typeof item === 'string' ? item : (item.entity || '');
+      if (!entityId) return;
+      const st = hass?.states[entityId];
+      const label = (typeof item === 'object' && item.name) || st?.attributes.friendly_name || entityId;
+      const domain = entityId.split('.')[0];
+      const icon = getEntityIcon(hass, entityId);
+
+      if (!st) {
+        rows += `<div class="popup-row"><ha-icon icon="${icon}" style="--mdc-icon-size:20px;color:rgba(255,255,255,0.25);flex-shrink:0;"></ha-icon><span class="popup-label" style="opacity:.4">${label} (nicht verfügbar)</span></div>`;
+        return;
+      }
+
+      const stateStr = st.state;
+
+      if (['switch', 'input_boolean', 'light'].includes(domain)) {
+        const isOn = stateStr === 'on';
+        rows += `<div class="popup-row">
+          <ha-icon icon="${icon}" style="--mdc-icon-size:20px;color:${isOn ? '#ffd54f' : 'rgba(255,255,255,0.4)'};flex-shrink:0;transition:color .3s;"></ha-icon>
+          <span class="popup-label">${label}</span>
+          <label class="toggle-sw">
+            <input type="checkbox" data-entity="${entityId}" data-control="toggle" ${isOn ? 'checked' : ''} />
+            <span class="tog-track"><span class="tog-thumb"></span></span>
+          </label>
+        </div>`;
+      } else if (['input_number', 'number'].includes(domain)) {
+        const min = st.attributes.min ?? 0;
+        const max = st.attributes.max ?? 100;
+        const step = st.attributes.step ?? 1;
+        const val = parseFloat(stateStr);
+        const unit = st.attributes.unit_of_measurement || '';
+        rows += `<div class="popup-row popup-col">
+          <div class="popup-row-head">
+            <ha-icon icon="${icon}" style="--mdc-icon-size:20px;color:rgba(255,255,255,0.6);flex-shrink:0;"></ha-icon>
+            <span class="popup-label">${label}</span>
+            <span class="popup-val-badge" data-val="${entityId}">${val}${unit ? ' '+unit : ''}</span>
+          </div>
+          <input type="range" class="popup-slider" data-entity="${entityId}" data-control="number" data-unit="${unit}" min="${min}" max="${max}" step="${step}" value="${val}" />
+        </div>`;
+      } else if (['input_select', 'select'].includes(domain)) {
+        const opts = st.attributes.options || [];
+        rows += `<div class="popup-row">
+          <ha-icon icon="${icon}" style="--mdc-icon-size:20px;color:rgba(255,255,255,0.6);flex-shrink:0;"></ha-icon>
+          <span class="popup-label">${label}</span>
+          <select class="popup-select" data-entity="${entityId}" data-control="select">
+            ${opts.map(o => `<option value="${o}" ${o === stateStr ? 'selected' : ''}>${o}</option>`).join('')}
+          </select>
+        </div>`;
+      } else if (domain === 'cover') {
+        rows += `<div class="popup-row">
+          <ha-icon icon="${icon}" style="--mdc-icon-size:20px;color:rgba(255,255,255,0.6);flex-shrink:0;"></ha-icon>
+          <span class="popup-label">${label}</span>
+          <div class="btn-grp">
+            <button class="cov-btn" data-entity="${entityId}" data-control="cover-open">Auf</button>
+            <button class="cov-btn" data-entity="${entityId}" data-control="cover-stop">Stop</button>
+            <button class="cov-btn" data-entity="${entityId}" data-control="cover-close">Zu</button>
+          </div>
+        </div>`;
+      } else {
+        const disp = stateStr + (st.attributes.unit_of_measurement ? ` ${st.attributes.unit_of_measurement}` : '');
+        rows += `<div class="popup-row">
+          <ha-icon icon="${icon}" style="--mdc-icon-size:20px;color:rgba(255,255,255,0.5);flex-shrink:0;"></ha-icon>
+          <span class="popup-label">${label}</span>
+          <span class="popup-state-val">${disp}</span>
+        </div>`;
+      }
+    });
+
+    if (!rows) {
+      rows = `<div style="text-align:center;padding:20px 0;color:rgba(255,255,255,0.35);font-size:13px;">Keine Entitäten konfiguriert</div>`;
+    }
+
+    this._popupEl.innerHTML = `
+      <style>
+        .popup-backdrop{position:fixed;inset:0;background:rgba(0,0,0,0.5);backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px);}
+        .popup-sheet{
+          position:relative;width:100%;max-width:480px;max-height:80vh;overflow-y:auto;
+          background:rgba(28,28,38,0.96);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);
+          border:1px solid rgba(255,255,255,0.14);border-radius:20px 20px 0 0;
+          padding:20px;box-sizing:border-box;
+          animation:gbcSlideUp .25s ease;
+        }
+        @keyframes gbcSlideUp{from{transform:translateY(100%);opacity:0}to{transform:translateY(0);opacity:1}}
+        .popup-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;}
+        .popup-title{font-size:16px;font-weight:600;color:rgba(255,255,255,0.92);}
+        .popup-close{background:rgba(255,255,255,0.1);border:none;border-radius:50%;width:28px;height:28px;color:rgba(255,255,255,0.7);cursor:pointer;font-size:15px;display:flex;align-items:center;justify-content:center;padding:0;}
+        .popup-close:hover{background:rgba(255,255,255,0.2);}
+        .popup-row{display:flex;align-items:center;gap:12px;padding:11px 0;border-bottom:1px solid rgba(255,255,255,0.07);}
+        .popup-row:last-child{border-bottom:none;}
+        .popup-col{flex-direction:column;align-items:stretch;gap:8px;}
+        .popup-row-head{display:flex;align-items:center;gap:12px;}
+        .popup-label{flex:1;font-size:14px;color:rgba(255,255,255,0.87);}
+        .popup-state-val{font-size:13px;color:rgba(255,255,255,0.5);font-weight:500;}
+        .popup-val-badge{font-size:13px;color:#ffd54f;font-weight:600;white-space:nowrap;}
+        .popup-slider{width:100%;accent-color:#ffd54f;cursor:pointer;}
+        .popup-select{background:rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.2);border-radius:8px;color:rgba(255,255,255,0.9);padding:6px 10px;font-size:13px;outline:none;max-width:160px;}
+        .popup-select option{background:#2a2a3a;color:#fff;}
+        .toggle-sw{position:relative;display:inline-block;width:42px;height:24px;flex-shrink:0;}
+        .toggle-sw input{opacity:0;width:0;height:0;position:absolute;}
+        .tog-track{position:absolute;inset:0;background:rgba(255,255,255,0.15);border-radius:24px;cursor:pointer;transition:.3s;}
+        .toggle-sw input:checked+.tog-track{background:#ffd54f;}
+        .tog-thumb{position:absolute;top:3px;left:3px;width:18px;height:18px;background:#fff;border-radius:50%;transition:.3s;}
+        .toggle-sw input:checked+.tog-track .tog-thumb{transform:translateX(18px);}
+        .btn-grp{display:flex;gap:6px;}
+        .cov-btn{background:rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.2);border-radius:8px;color:rgba(255,255,255,0.85);padding:6px 12px;font-size:12px;cursor:pointer;transition:.2s;}
+        .cov-btn:hover{background:rgba(255,255,255,0.2);}
+      </style>
+      <div class="popup-backdrop" id="gbcBackdrop"></div>
+      <div class="popup-sheet">
+        <div class="popup-header">
+          <span class="popup-title">${cardName}</span>
+          <button class="popup-close" id="gbcClose">&#x2715;</button>
+        </div>
+        ${rows}
+      </div>
+    `;
+
+    this._popupEl.querySelector('#gbcClose').addEventListener('click', () => this._closePopup());
+    this._popupEl.querySelector('#gbcBackdrop').addEventListener('click', () => this._closePopup());
+
+    this._popupEl.querySelectorAll('[data-control="toggle"]').forEach(cb => {
+      cb.addEventListener('change', e => {
+        const entityId = e.target.dataset.entity;
+        this._hass.callService('homeassistant', e.target.checked ? 'turn_on' : 'turn_off', { entity_id: entityId });
+      });
+    });
+
+    this._popupEl.querySelectorAll('[data-control="number"]').forEach(slider => {
+      slider.addEventListener('input', e => {
+        const valEl = this._popupEl.querySelector(`[data-val="${e.target.dataset.entity}"]`);
+        const unit = e.target.dataset.unit;
+        if (valEl) valEl.textContent = `${e.target.value}${unit ? ' '+unit : ''}`;
+      });
+      slider.addEventListener('change', e => {
+        const entityId = e.target.dataset.entity;
+        const domain = entityId.split('.')[0];
+        const val = parseFloat(e.target.value);
+        if (domain === 'input_number') {
+          this._hass.callService('input_number', 'set_value', { entity_id: entityId, value: val });
+        } else {
+          this._hass.callService('number', 'set_value', { entity_id: entityId, value: val });
+        }
+      });
+    });
+
+    this._popupEl.querySelectorAll('[data-control="select"]').forEach(sel => {
+      sel.addEventListener('change', e => {
+        const entityId = e.target.dataset.entity;
+        const domain = entityId.split('.')[0];
+        if (domain === 'input_select') {
+          this._hass.callService('input_select', 'select_option', { entity_id: entityId, option: e.target.value });
+        } else {
+          this._hass.callService('select', 'select_option', { entity_id: entityId, option: e.target.value });
+        }
+      });
+    });
+
+    this._popupEl.querySelectorAll('[data-control^="cover-"]').forEach(btn => {
+      btn.addEventListener('click', e => {
+        const entityId = e.target.dataset.entity;
+        const ctrl = e.target.dataset.control;
+        const svc = ctrl === 'cover-open' ? 'open_cover' : ctrl === 'cover-close' ? 'close_cover' : 'stop_cover';
+        this._hass.callService('cover', svc, { entity_id: entityId });
+      });
+    });
+  }
+
   _hexToRgba(hex, alpha) {
     if (!hex || hex.startsWith('rgb')) return hex || `rgba(255,255,255,${alpha})`;
     let h = hex.replace('#', '');
@@ -192,7 +438,6 @@ class GlassButtonCard extends HTMLElement {
     const d = this._config.design || 'glass';
     const opacity = unavailable ? 'opacity: 0.5;' : '';
 
-    // Theme folgen: HA-Card-Variablen nutzen (Liquid Glass etc. greifen)
     if (this._config.follow_theme) {
       return `
         background: ${active ? this._hexToRgba(color, 0.15) : 'var(--ha-card-background, var(--card-background-color, rgba(255,255,255,0.05)))'};
@@ -283,11 +528,6 @@ class GlassButtonCard extends HTMLElement {
     if (renderKey === this._lastRenderKey) return;
     this._lastRenderKey = renderKey;
 
-    // Durchgestrichen wenn nicht verfügbar
-    const strikeStyle = unavailable
-      ? `position:relative; &::after { content:''; position:absolute; top:50%; left:10%; width:80%; height:2px; background:rgba(255,255,255,0.5); transform:rotate(-45deg); }`
-      : '';
-
     this.shadowRoot.innerHTML = `
       <style>
         :host {
@@ -325,7 +565,6 @@ class GlassButtonCard extends HTMLElement {
           ${this._iconCSS(active, color)}
           transition: all 0.3s ease;
         }
-        /* Durchgestrichene Linie bei unavailable */
         .strike-line {
           display: ${unavailable ? 'block' : 'none'};
           position: absolute;
@@ -366,6 +605,8 @@ class GlassButtonCard extends HTMLElement {
       </div>
     `;
 
+    this._ensurePopup();
+
     const btn = this.shadowRoot.getElementById('btn');
     let holdTimer = null, held = false;
 
@@ -374,7 +615,10 @@ class GlassButtonCard extends HTMLElement {
       this._handleTap();
     });
 
-    if (this._config.hold_action && this._config.hold_action.action !== 'none') {
+    const hasHold = (this._config.hold_action && this._config.hold_action.action !== 'none') ||
+                    (this._config.popup_enabled && this._config.popup_trigger === 'hold');
+
+    if (hasHold) {
       const start  = () => { held=false; holdTimer=setTimeout(()=>{held=true;this._handleHold();},500); };
       const cancel = () => clearTimeout(holdTimer);
       btn.addEventListener('mousedown', start);
@@ -443,15 +687,14 @@ class GlassButtonCardEditor extends HTMLElement {
     }));
   }
 
-  // ---- Entity Picker mit Icon + Friendly Name + Suche ----
   _buildEntityPicker(container, currentValue, onChange) {
     container.innerHTML = '';
     const hass = this._hass;
     const entities = hass ? Object.keys(hass.states) : [];
 
-    // Sinnvolle Sortierung: bevorzugte Domains zuerst
     const preferred = ['light','switch','sensor','binary_sensor','climate','cover',
-                       'media_player','input_boolean','vacuum','fan','lock','alarm_control_panel'];
+                       'media_player','input_boolean','vacuum','fan','lock','alarm_control_panel',
+                       'input_number','input_select','number','select','cover'];
     const sorted = [
       ...entities.filter(e => preferred.some(d => e.startsWith(d+'.'))),
       ...entities.filter(e => !preferred.some(d => e.startsWith(d+'.'))),
@@ -468,7 +711,6 @@ class GlassButtonCardEditor extends HTMLElement {
     const inputRow = document.createElement('div');
     inputRow.style.cssText = 'display:flex;align-items:center;gap:8px;border:1px solid var(--divider-color,#e0e0e0);border-radius:8px;background:var(--card-background-color,#fff);padding:6px 11px;';
 
-    // Icon der aktuell gewählten Entität
     const iconEl = document.createElement('ha-icon');
     iconEl.icon = getEntityIcon(hass, currentValue);
     iconEl.style.cssText = '--mdc-icon-size:20px;color:var(--secondary-text-color,#727272);flex-shrink:0;';
@@ -478,7 +720,6 @@ class GlassButtonCardEditor extends HTMLElement {
     input.placeholder = 'Entität suchen (Name oder ID)…';
     input.style.cssText = 'flex:1;border:none;outline:none;background:transparent;color:var(--primary-text-color,#212121);font-size:14px;';
 
-    // Zeige Friendly Name des aktuellen Werts
     if (currentValue && hass && hass.states[currentValue]) {
       const fn = hass.states[currentValue].attributes.friendly_name;
       input.value = fn || currentValue;
@@ -540,7 +781,6 @@ class GlassButtonCardEditor extends HTMLElement {
     container.appendChild(wrapper);
   }
 
-  // ---- Icon Picker ----
   _buildIconPicker(container, label, currentValue, onChange) {
     container.innerHTML = '';
     const lbl = document.createElement('label');
@@ -576,6 +816,52 @@ class GlassButtonCardEditor extends HTMLElement {
     }
   }
 
+  _buildPopupEntityList(container) {
+    if (!container) return;
+    container.innerHTML = '';
+    const entities = this._config.popup_entities || [];
+
+    if (entities.length === 0) {
+      const hint = document.createElement('div');
+      hint.style.cssText = 'font-size:12px;color:var(--secondary-text-color,#727272);padding:4px 0 8px;';
+      hint.textContent = 'Noch keine Entitäten hinzugefügt.';
+      container.appendChild(hint);
+      return;
+    }
+
+    entities.forEach((item, idx) => {
+      const entityId = typeof item === 'string' ? item : (item.entity || '');
+
+      const row = document.createElement('div');
+      row.style.cssText = 'display:flex;align-items:flex-start;gap:8px;margin-bottom:8px;';
+
+      const pickerDiv = document.createElement('div');
+      pickerDiv.style.cssText = 'flex:1;';
+
+      const removeBtn = document.createElement('button');
+      removeBtn.textContent = '×';
+      removeBtn.style.cssText = 'flex-shrink:0;width:36px;height:38px;background:rgba(200,60,60,0.1);border:1px solid rgba(200,60,60,0.3);border-radius:8px;color:rgb(180,40,40);cursor:pointer;font-size:18px;display:flex;align-items:center;justify-content:center;padding:0;';
+      removeBtn.addEventListener('click', () => {
+        const arr = [...(this._config.popup_entities || [])];
+        arr.splice(idx, 1);
+        this._config = { ...this._config, popup_entities: arr };
+        this._emit();
+        this._buildPopupEntityList(container);
+      });
+
+      row.appendChild(pickerDiv);
+      row.appendChild(removeBtn);
+      container.appendChild(row);
+
+      this._buildEntityPicker(pickerDiv, entityId, (newEntityId) => {
+        const arr = [...(this._config.popup_entities || [])];
+        arr[idx] = newEntityId;
+        this._config = { ...this._config, popup_entities: arr };
+        this._emit();
+      });
+    });
+  }
+
   _render() {
     this._rendered = true;
     const root = this.shadowRoot;
@@ -583,6 +869,10 @@ class GlassButtonCardEditor extends HTMLElement {
     const tapAction  = c.tap_action?.action  || 'toggle';
     const holdAction = c.hold_action?.action || 'none';
     const glowOn = c.glow !== false;
+    const popupEnabled = !!c.popup_enabled;
+    const popupTrigger = c.popup_trigger || 'tap';
+    const tapBlocked  = popupEnabled && popupTrigger === 'tap';
+    const holdBlocked = popupEnabled && popupTrigger === 'hold';
 
     const designs = [['glass','Glas'],['solid','Vollfläche'],['outline','Umrandet'],['minimal','Minimal']];
     const actions = [
@@ -612,6 +902,12 @@ class GlassButtonCardEditor extends HTMLElement {
         .range-wrap{display:flex;align-items:center;gap:8px;}
         .range-wrap input{flex:1;}
         .range-val{font-size:12px;color:var(--secondary-text-color,#727272);min-width:34px;text-align:right;}
+        .add-btn{background:rgba(3,169,244,0.08);border:1px solid rgba(3,169,244,0.3);border-radius:8px;
+          color:var(--primary-color,#03a9f4);padding:8px 14px;font-size:13px;cursor:pointer;
+          width:100%;margin-top:8px;transition:.2s;}
+        .add-btn:hover{background:rgba(3,169,244,0.18);}
+        .popup-hint{font-size:12px;color:var(--secondary-text-color,#888);padding:6px 0 2px;
+          background:rgba(3,169,244,0.06);border-radius:6px;padding:6px 10px;}
       </style>
       <div class="editor">
         <div class="section">Allgemein</div>
@@ -654,7 +950,6 @@ class GlassButtonCardEditor extends HTMLElement {
             </div>
           </div>
         </div>
-
         <div class="row">
           <div class="field">
             <label>Höhe (px, optional)</label>
@@ -713,42 +1008,62 @@ class GlassButtonCardEditor extends HTMLElement {
           <input type="color" id="threshold_color" value="${c.threshold_color||'#FF6B35'}" />
         </div>
 
-        <div class="section">Aktion bei Tippen</div>
-        <div class="field">
-          <label>Was soll passieren?</label>
-          <select id="tap_type">
-            ${actions.map(([v,l])=>`<option value="${v}" ${tapAction===v?'selected':''}>${l}</option>`).join('')}
-          </select>
+        <div class="section">Popup</div>
+        <div class="toggle-row">
+          <label>Popup aktivieren</label>
+          <input type="checkbox" id="popup_enabled" ${popupEnabled?'checked':''} />
         </div>
-        ${tapAction==='navigate'   ? `<div class="field"><label>Navigationspfad</label><input type="text" id="nav_path" value="${c.tap_action?.navigation_path||''}" placeholder="/lovelace/meinzimmer" /></div>` : ''}
-        ${tapAction==='call-service'? `<div class="field"><label>Dienst</label><input type="text" id="svc" value="${c.tap_action?.service||''}" placeholder="script.mein_script" /><span class="hint">Format: domain.dienst</span></div>` : ''}
-        ${tapAction==='url'         ? `<div class="field"><label>URL</label><input type="text" id="url_path" value="${c.tap_action?.url_path||''}" placeholder="https://..." /></div>` : ''}
+        ${popupEnabled ? `
+          <div class="field">
+            <label>Popup öffnen bei</label>
+            <select id="popup_trigger">
+              <option value="tap" ${popupTrigger==='tap'?'selected':''}>Tippen</option>
+              <option value="hold" ${popupTrigger==='hold'?'selected':''}>Gedrückt halten</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>Entitäten im Popup</label>
+            <div id="popupEntitiesContainer"></div>
+            <button class="add-btn" id="addPopupEntity">+ Entität hinzufügen</button>
+          </div>
+        ` : ''}
+
+        <div class="section">Aktion bei Tippen</div>
+        ${tapBlocked
+          ? `<div class="popup-hint">Tippen öffnet das Popup.</div>`
+          : `<div class="field">
+              <label>Was soll passieren?</label>
+              <select id="tap_type">
+                ${actions.map(([v,l])=>`<option value="${v}" ${tapAction===v?'selected':''}>${l}</option>`).join('')}
+              </select>
+            </div>
+            ${tapAction==='navigate'    ? `<div class="field"><label>Navigationspfad</label><input type="text" id="nav_path" value="${c.tap_action?.navigation_path||''}" placeholder="/lovelace/meinzimmer" /></div>` : ''}
+            ${tapAction==='call-service'? `<div class="field"><label>Dienst</label><input type="text" id="svc" value="${c.tap_action?.service||''}" placeholder="script.mein_script" /><span class="hint">Format: domain.dienst</span></div>` : ''}
+            ${tapAction==='url'         ? `<div class="field"><label>URL</label><input type="text" id="url_path" value="${c.tap_action?.url_path||''}" placeholder="https://..." /></div>` : ''}`}
 
         <div class="section">Aktion bei Gedrückt halten</div>
-        <div class="field">
-          <label>Was soll passieren?</label>
-          <select id="hold_type">
-            ${actions.map(([v,l])=>`<option value="${v}" ${holdAction===v?'selected':''}>${l}</option>`).join('')}
-          </select>
-        </div>
-        ${holdAction==='navigate'    ? `<div class="field"><label>Navigationspfad</label><input type="text" id="hold_nav_path" value="${c.hold_action?.navigation_path||''}" placeholder="/lovelace/meinzimmer" /></div>` : ''}
-        ${holdAction==='call-service'? `<div class="field"><label>Dienst</label><input type="text" id="hold_svc" value="${c.hold_action?.service||''}" placeholder="script.mein_script" /><span class="hint">Format: domain.dienst</span></div>` : ''}
-        ${holdAction==='url'         ? `<div class="field"><label>URL</label><input type="text" id="hold_url_path" value="${c.hold_action?.url_path||''}" placeholder="https://..." /></div>` : ''}
-        ${holdAction==='more-info'   ? `<div class="field"><span class="hint">Öffnet das Info-Fenster der konfigurierten Entität.</span></div>` : ''}
+        ${holdBlocked
+          ? `<div class="popup-hint">Gedrückt halten öffnet das Popup.</div>`
+          : `<div class="field">
+              <label>Was soll passieren?</label>
+              <select id="hold_type">
+                ${actions.map(([v,l])=>`<option value="${v}" ${holdAction===v?'selected':''}>${l}</option>`).join('')}
+              </select>
+            </div>
+            ${holdAction==='navigate'    ? `<div class="field"><label>Navigationspfad</label><input type="text" id="hold_nav_path" value="${c.hold_action?.navigation_path||''}" placeholder="/lovelace/meinzimmer" /></div>` : ''}
+            ${holdAction==='call-service'? `<div class="field"><label>Dienst</label><input type="text" id="hold_svc" value="${c.hold_action?.service||''}" placeholder="script.mein_script" /><span class="hint">Format: domain.dienst</span></div>` : ''}
+            ${holdAction==='url'         ? `<div class="field"><label>URL</label><input type="text" id="hold_url_path" value="${c.hold_action?.url_path||''}" placeholder="https://..." /></div>` : ''}
+            ${holdAction==='more-info'   ? `<div class="field"><span class="hint">Öffnet das Info-Fenster der konfigurierten Entität.</span></div>` : ''}`}
       </div>
     `;
 
-    // Entity Picker – beim Auswählen Standard-Icon der Entität übernehmen
+    // Entity Picker
     this._buildEntityPicker(
       root.getElementById('entityContainer'),
       c.entity || '',
       (entityId) => {
         const autoIcon = getEntityIcon(this._hass, entityId);
-        this._config = {
-          ...this._config,
-          entity: entityId,
-          icon: autoIcon,  // Icon der gewählten Entität übernehmen
-        };
+        this._config = { ...this._config, entity: entityId, icon: autoIcon };
         this._emit();
         this._render();
       }
@@ -757,6 +1072,11 @@ class GlassButtonCardEditor extends HTMLElement {
     // Icon Picker
     this._buildIconPicker(root.getElementById('iconContainer'), 'Standard Icon', c.icon||'', v => this._update('icon', v));
     this._buildIconPicker(root.getElementById('iconActiveContainer'), 'Icon wenn aktiv (optional)', c.icon_active||'', v => this._update('icon_active', v));
+
+    // Popup entity list
+    if (popupEnabled) {
+      this._buildPopupEntityList(root.getElementById('popupEntitiesContainer'));
+    }
 
     // Einfache Felder
     const on = (id, key, ev='change', fn=v=>v) => {
@@ -772,7 +1092,6 @@ class GlassButtonCardEditor extends HTMLElement {
     on('threshold_operator', 'threshold_operator');
     on('threshold_color', 'threshold_color');
 
-    // Schwellenwert: leer = entfernen
     const thrEl = root.getElementById('threshold');
     if (thrEl) thrEl.addEventListener('change', e => {
       const v = e.target.value.trim();
@@ -781,7 +1100,6 @@ class GlassButtonCardEditor extends HTMLElement {
       this._config = cfg; this._emit();
     });
 
-    // Höhe & Breite: leer = Wert entfernen (automatisch)
     const dimHandler = (id, key) => {
       const el = root.getElementById(id);
       if (!el) return;
@@ -819,9 +1137,32 @@ class GlassButtonCardEditor extends HTMLElement {
     const showState = root.getElementById('show_state');
     if (showState) showState.addEventListener('change', e => this._update('show_state', e.target.checked));
 
+    // Popup controls
+    const popupEnabledCb = root.getElementById('popup_enabled');
+    if (popupEnabledCb) popupEnabledCb.addEventListener('change', e => {
+      this._config = { ...this._config, popup_enabled: e.target.checked };
+      this._emit();
+      setTimeout(() => this._render(), 50);
+    });
+
+    const popupTriggerSel = root.getElementById('popup_trigger');
+    if (popupTriggerSel) popupTriggerSel.addEventListener('change', e => {
+      this._config = { ...this._config, popup_trigger: e.target.value };
+      this._emit();
+      setTimeout(() => this._render(), 50);
+    });
+
+    const addPopupEntityBtn = root.getElementById('addPopupEntity');
+    if (addPopupEntityBtn) addPopupEntityBtn.addEventListener('click', () => {
+      const arr = [...(this._config.popup_entities || []), ''];
+      this._config = { ...this._config, popup_entities: arr };
+      this._emit();
+      this._buildPopupEntityList(root.getElementById('popupEntitiesContainer'));
+    });
+
+    // Tap action
     const tapType = root.getElementById('tap_type');
     if (tapType) tapType.addEventListener('change', e => this._setActionType('tap_action', e.target.value));
-
     const navPath = root.getElementById('nav_path');
     if (navPath) navPath.addEventListener('change', e => this._updateAction('tap_action','navigation_path',e.target.value));
     const svc = root.getElementById('svc');
@@ -829,9 +1170,9 @@ class GlassButtonCardEditor extends HTMLElement {
     const urlPath = root.getElementById('url_path');
     if (urlPath) urlPath.addEventListener('change', e => this._updateAction('tap_action','url_path',e.target.value));
 
+    // Hold action
     const holdType = root.getElementById('hold_type');
     if (holdType) holdType.addEventListener('change', e => this._setActionType('hold_action', e.target.value));
-
     const holdNavPath = root.getElementById('hold_nav_path');
     if (holdNavPath) holdNavPath.addEventListener('change', e => this._updateAction('hold_action','navigation_path',e.target.value));
     const holdSvc = root.getElementById('hold_svc');
@@ -847,7 +1188,7 @@ window.customCards = window.customCards || [];
 window.customCards.push({
   type: 'glass-button-card',
   name: 'Glass Button Card',
-  description: 'Konfigurierbarer Button im Glasstil mit Editor, Leuchteffekt und zustandsabhängigen Icons',
+  description: 'Konfigurierbarer Button im Glasstil mit Editor, Popup, Leuchteffekt und zustandsabhängigen Icons',
   preview: true,
   documentationURL: 'https://github.com/pquandel2-alt/glass-button-card',
 });
