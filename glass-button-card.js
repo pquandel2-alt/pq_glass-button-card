@@ -231,20 +231,50 @@ class GlassButtonCard extends HTMLElement {
       const st = this._hass.states[entityId];
       if (!st) return;
       const domain = entityId.split('.')[0];
-      if (['switch', 'input_boolean', 'light'].includes(domain)) {
-        const cb = this._popupEl.querySelector(`[data-entity="${entityId}"][data-control="toggle"]`);
-        if (cb) cb.checked = st.state === 'on';
-      } else if (['input_number', 'number'].includes(domain)) {
-        const slider = this._popupEl.querySelector(`[data-entity="${entityId}"][data-control="number"]`);
-        if (slider) slider.value = parseFloat(st.state);
-        const valEl = this._popupEl.querySelector(`[data-val="${entityId}"]`);
-        if (valEl) {
+
+      // Toggle (any on/off entity)
+      const cb = this._popupEl.querySelector(`[data-entity="${entityId}"][data-control="toggle"]`);
+      if (cb) cb.checked = st.state === 'on' || (domain === 'lock' ? st.state === 'locked' : false);
+
+      // Slider — data-type tells us which value to read
+      const slider = this._popupEl.querySelector(`[data-entity="${entityId}"][data-control="slider"]`);
+      if (slider) {
+        const t = slider.dataset.type;
+        let val;
+        if (t === 'climate-temp')  val = st.attributes.temperature;
+        else if (t === 'volume')   val = Math.round((st.attributes.volume_level ?? 0) * 100);
+        else if (t === 'fan-pct')  val = st.attributes.percentage ?? 0;
+        else                       val = parseFloat(st.state);
+        if (!isNaN(val)) slider.value = val;
+      }
+
+      // Val badge (generic)
+      const valEl = this._popupEl.querySelector(`[data-val="${entityId}"]`);
+      if (valEl) {
+        const t = slider?.dataset.type;
+        if (t === 'climate-temp') valEl.textContent = `${st.attributes.temperature ?? '–'} °C`;
+        else if (t === 'volume')  valEl.textContent = `${Math.round((st.attributes.volume_level ?? 0) * 100)} %`;
+        else if (t === 'fan-pct') valEl.textContent = `${st.attributes.percentage ?? 0} %`;
+        else {
           const unit = st.attributes.unit_of_measurement || '';
           valEl.textContent = `${parseFloat(st.state)}${unit ? ' '+unit : ''}`;
         }
-      } else if (['input_select', 'select'].includes(domain)) {
-        const sel = this._popupEl.querySelector(`[data-entity="${entityId}"][data-control="select"]`);
-        if (sel) sel.value = st.state;
+      }
+
+      // Select (input_select, select, climate mode)
+      const sel = this._popupEl.querySelector(`[data-entity="${entityId}"][data-control="select"]`);
+      if (sel) sel.value = st.state;
+
+      // Timer remaining
+      const timerDisp = this._popupEl.querySelector(`[data-timer="${entityId}"]`);
+      if (timerDisp) timerDisp.textContent = st.attributes.remaining || '–';
+
+      // Media info text
+      const mediaInfo = this._popupEl.querySelector(`[data-media-info="${entityId}"]`);
+      if (mediaInfo) {
+        const title = st.attributes.media_title || '';
+        const artist = st.attributes.media_artist || '';
+        mediaInfo.textContent = title ? (artist ? `${artist} – ${title}` : title) : '';
       }
     });
   }
@@ -254,8 +284,28 @@ class GlassButtonCard extends HTMLElement {
     const hass = this._hass;
     const entities = c.popup_entities || [];
     const cardName = c.name || (this._entityState()?.attributes.friendly_name) || 'Steuerung';
+    const IC = (icon, color='rgba(255,255,255,0.55)') =>
+      `<ha-icon icon="${icon}" style="--mdc-icon-size:20px;color:${color};flex-shrink:0;"></ha-icon>`;
+    const TOGGLE = (entityId, isOn) => `
+      <label class="toggle-sw">
+        <input type="checkbox" data-entity="${entityId}" data-control="toggle" ${isOn ? 'checked' : ''} />
+        <span class="tog-track"><span class="tog-thumb"></span></span>
+      </label>`;
+    const SLIDER = (entityId, min, max, step, val, unit, type) => `
+      <div class="popup-row-head" style="padding:0;">
+        <span class="popup-val-badge" data-val="${entityId}">${val}${unit ? ' '+unit : ''}</span>
+      </div>
+      <input type="range" class="popup-slider" data-entity="${entityId}" data-control="slider" data-type="${type}" data-unit="${unit}" min="${min}" max="${max}" step="${step}" value="${val}" />`;
+    const ACTBTN = (entityId, ctrl, label) =>
+      `<button class="act-btn" data-entity="${entityId}" data-control="${ctrl}">${label}</button>`;
+    const COVBTN = (entityId, ctrl, label) =>
+      `<button class="cov-btn" data-entity="${entityId}" data-control="${ctrl}">${label}</button>`;
+
+    const CLIMATE_MODES = {heat:'Heizen',cool:'Kühlen',auto:'Auto',heat_cool:'Auto Temp',
+                           dry:'Trocknen',fan_only:'Lüfter',off:'Aus'};
 
     let rows = '';
+
     entities.forEach(item => {
       const entityId = typeof item === 'string' ? item : (item.entity || '');
       if (!entityId) return;
@@ -265,62 +315,207 @@ class GlassButtonCard extends HTMLElement {
       const icon = getEntityIcon(hass, entityId);
 
       if (!st) {
-        rows += `<div class="popup-row"><ha-icon icon="${icon}" style="--mdc-icon-size:20px;color:rgba(255,255,255,0.25);flex-shrink:0;"></ha-icon><span class="popup-label" style="opacity:.4">${label} (nicht verfügbar)</span></div>`;
+        rows += `<div class="popup-row">${IC(icon,'rgba(255,255,255,0.2)')}<span class="popup-label" style="opacity:.4">${label} (nicht verfügbar)</span></div>`;
         return;
       }
 
-      const stateStr = st.state;
+      const s = st.state;
+      const isOn = s === 'on';
 
-      if (['switch', 'input_boolean', 'light'].includes(domain)) {
-        const isOn = stateStr === 'on';
-        rows += `<div class="popup-row">
-          <ha-icon icon="${icon}" style="--mdc-icon-size:20px;color:${isOn ? '#ffd54f' : 'rgba(255,255,255,0.4)'};flex-shrink:0;transition:color .3s;"></ha-icon>
+      // ── Button / Scene / Script ──
+      if (['button', 'input_button', 'scene'].includes(domain)) {
+        rows += `<div class="popup-row">${IC(icon)}<span class="popup-label">${label}</span>
+          ${ACTBTN(entityId, 'press', domain === 'scene' ? 'Aktivieren' : 'Auslösen')}</div>`;
+
+      // ── Script ──
+      } else if (domain === 'script') {
+        rows += `<div class="popup-row">${IC(icon, isOn ? '#ffd54f' : 'rgba(255,255,255,0.55)')}
           <span class="popup-label">${label}</span>
-          <label class="toggle-sw">
-            <input type="checkbox" data-entity="${entityId}" data-control="toggle" ${isOn ? 'checked' : ''} />
-            <span class="tog-track"><span class="tog-thumb"></span></span>
-          </label>
+          ${isOn ? `<span class="popup-state-val">Läuft…</span>` : ''}
+          ${ACTBTN(entityId, 'press', 'Ausführen')}</div>`;
+
+      // ── Lock ──
+      } else if (domain === 'lock') {
+        const locked = s === 'locked';
+        rows += `<div class="popup-row">${IC(locked ? 'mdi:lock' : 'mdi:lock-open-outline', locked ? '#ffd54f' : 'rgba(255,255,255,0.5)')}
+          <span class="popup-label">${label}</span>
+          <span class="popup-state-val">${locked ? 'Verriegelt' : 'Offen'}</span>
+          ${TOGGLE(entityId, locked)}</div>`;
+
+      // ── Cover ──
+      } else if (domain === 'cover') {
+        const pos = st.attributes.current_position;
+        rows += `<div class="popup-row">${IC(icon)}
+          <span class="popup-label">${label}</span>
+          ${pos !== undefined ? `<span class="popup-state-val">${pos} %</span>` : ''}
+          <div class="btn-grp">
+            ${COVBTN(entityId,'cover-open','Auf')}
+            ${COVBTN(entityId,'cover-stop','Stop')}
+            ${COVBTN(entityId,'cover-close','Zu')}
+          </div></div>`;
+
+      // ── Climate ──
+      } else if (domain === 'climate') {
+        const modes = st.attributes.hvac_modes || [];
+        const temp = st.attributes.temperature;
+        const currTemp = st.attributes.current_temperature;
+        const minT = st.attributes.min_temp ?? 5;
+        const maxT = st.attributes.max_temp ?? 35;
+        const stepT = st.attributes.target_temp_step ?? 0.5;
+        rows += `<div class="popup-row popup-col">
+          <div class="popup-row-head">
+            ${IC(icon, s !== 'off' ? '#ffd54f' : 'rgba(255,255,255,0.4)')}
+            <span class="popup-label">${label}</span>
+            ${currTemp !== undefined ? `<span class="popup-state-val">${currTemp} °C</span>` : ''}
+          </div>
+          <div style="display:flex;align-items:center;gap:10px;padding:2px 0;">
+            <span style="font-size:12px;color:rgba(255,255,255,0.45);flex:1;">Modus</span>
+            <select class="popup-select" data-entity="${entityId}" data-control="select">
+              ${modes.map(m => `<option value="${m}" ${m===s?'selected':''}>${CLIMATE_MODES[m]||m}</option>`).join('')}
+            </select>
+          </div>
+          ${temp !== undefined ? SLIDER(entityId, minT, maxT, stepT, temp, '°C', 'climate-temp') : ''}
         </div>`;
+
+      // ── Media Player ──
+      } else if (domain === 'media_player') {
+        const isPlaying = s === 'playing';
+        const isOff = ['off','unavailable','unknown'].includes(s);
+        const vol = Math.round((st.attributes.volume_level ?? 0) * 100);
+        const title = st.attributes.media_title || '';
+        const artist = st.attributes.media_artist || '';
+        const mediaText = title ? (artist ? `${artist} – ${title}` : title) : '';
+        rows += `<div class="popup-row popup-col">
+          <div class="popup-row-head">
+            ${IC(icon, isPlaying ? '#ffd54f' : 'rgba(255,255,255,0.5)')}
+            <span class="popup-label">${label}</span>
+            ${!isOff ? `<button class="act-btn" data-entity="${entityId}" data-control="media-play" style="padding:5px 8px;">
+              <ha-icon icon="${isPlaying ? 'mdi:pause' : 'mdi:play'}" style="--mdc-icon-size:16px;"></ha-icon>
+            </button>` : `<span class="popup-state-val">${STATE_MAP_DE[s]||s}</span>`}
+          </div>
+          ${mediaText ? `<div style="font-size:12px;color:rgba(255,255,255,0.45);padding-left:32px;" data-media-info="${entityId}">${mediaText}</div>` : ''}
+          ${!isOff && st.attributes.volume_level !== undefined ? `
+          <div style="display:flex;align-items:center;gap:8px;">
+            <ha-icon icon="mdi:volume-medium" style="--mdc-icon-size:16px;color:rgba(255,255,255,0.4);flex-shrink:0;"></ha-icon>
+            <input type="range" class="popup-slider" style="flex:1;" data-entity="${entityId}" data-control="slider" data-type="volume" data-unit="%" min="0" max="100" step="1" value="${vol}" />
+            <span class="popup-val-badge" data-val="${entityId}">${vol} %</span>
+          </div>` : ''}
+        </div>`;
+
+      // ── Vacuum ──
+      } else if (domain === 'vacuum') {
+        const isCleaning = s === 'cleaning';
+        const isDocked = s === 'docked';
+        const isPaused = s === 'paused';
+        const stateLabel = {cleaning:'Saugt',returning:'Kehrt zurück',docked:'In Station',idle:'Bereit',paused:'Pausiert',error:'Fehler'}[s] || s;
+        rows += `<div class="popup-row">${IC(icon, isCleaning ? '#ffd54f' : 'rgba(255,255,255,0.5)')}
+          <span class="popup-label">${label}</span>
+          <span class="popup-state-val">${stateLabel}</span>
+          <div class="btn-grp">
+            ${!isCleaning && !isPaused ? COVBTN(entityId,'vacuum-start','Start') : ''}
+            ${isCleaning ? COVBTN(entityId,'vacuum-pause','Pause') : ''}
+            ${isPaused ? COVBTN(entityId,'vacuum-start','Weiter') : ''}
+            ${!isDocked ? COVBTN(entityId,'vacuum-dock','Dock') : ''}
+          </div></div>`;
+
+      // ── Timer ──
+      } else if (domain === 'timer') {
+        const isActive = s === 'active';
+        const isPaused = s === 'paused';
+        const remaining = st.attributes.remaining || '–';
+        rows += `<div class="popup-row">${IC(icon, isActive ? '#ffd54f' : 'rgba(255,255,255,0.5)')}
+          <span class="popup-label">${label}</span>
+          <span class="popup-val-badge" data-timer="${entityId}">${remaining}</span>
+          <div class="btn-grp">
+            ${!isActive || isPaused ? COVBTN(entityId,'timer-start', isPaused ? 'Weiter' : 'Start') : ''}
+            ${isActive && !isPaused ? COVBTN(entityId,'timer-pause','Pause') : ''}
+            ${(isActive || isPaused) ? COVBTN(entityId,'timer-cancel','Stop') : ''}
+          </div></div>`;
+
+      // ── Input Text ──
+      } else if (domain === 'input_text') {
+        const maxLen = st.attributes.max ?? 100;
+        rows += `<div class="popup-row popup-col">
+          <div class="popup-row-head">${IC(icon)}<span class="popup-label">${label}</span></div>
+          <input type="text" class="popup-text-input" data-entity="${entityId}" data-control="text" value="${s}" maxlength="${maxLen}" />
+        </div>`;
+
+      // ── Automation ──
+      } else if (domain === 'automation') {
+        rows += `<div class="popup-row">${IC(icon, isOn ? '#ffd54f' : 'rgba(255,255,255,0.5)')}
+          <span class="popup-label">${label}</span>
+          ${ACTBTN(entityId,'automation-trigger','Auslösen')}
+          ${TOGGLE(entityId, isOn)}</div>`;
+
+      // ── Fan ──
+      } else if (domain === 'fan') {
+        const hasPct = st.attributes.percentage !== undefined && st.attributes.percentage_step !== undefined;
+        const pct = st.attributes.percentage ?? 0;
+        const pctStep = st.attributes.percentage_step ?? 1;
+        rows += `<div class="popup-row popup-col">
+          <div class="popup-row-head">
+            ${IC(icon, isOn ? '#ffd54f' : 'rgba(255,255,255,0.5)')}
+            <span class="popup-label">${label}</span>
+            ${TOGGLE(entityId, isOn)}
+          </div>
+          ${hasPct && isOn ? SLIDER(entityId, 0, 100, pctStep, pct, '%', 'fan-pct') : ''}
+        </div>`;
+
+      // ── Input Number / Number ──
       } else if (['input_number', 'number'].includes(domain)) {
         const min = st.attributes.min ?? 0;
         const max = st.attributes.max ?? 100;
         const step = st.attributes.step ?? 1;
-        const val = parseFloat(stateStr);
+        const val = parseFloat(s);
         const unit = st.attributes.unit_of_measurement || '';
         rows += `<div class="popup-row popup-col">
-          <div class="popup-row-head">
-            <ha-icon icon="${icon}" style="--mdc-icon-size:20px;color:rgba(255,255,255,0.6);flex-shrink:0;"></ha-icon>
-            <span class="popup-label">${label}</span>
-            <span class="popup-val-badge" data-val="${entityId}">${val}${unit ? ' '+unit : ''}</span>
-          </div>
-          <input type="range" class="popup-slider" data-entity="${entityId}" data-control="number" data-unit="${unit}" min="${min}" max="${max}" step="${step}" value="${val}" />
+          <div class="popup-row-head">${IC(icon)}<span class="popup-label">${label}</span></div>
+          ${SLIDER(entityId, min, max, step, val, unit, 'number')}
         </div>`;
+
+      // ── Input Select / Select ──
       } else if (['input_select', 'select'].includes(domain)) {
         const opts = st.attributes.options || [];
-        rows += `<div class="popup-row">
-          <ha-icon icon="${icon}" style="--mdc-icon-size:20px;color:rgba(255,255,255,0.6);flex-shrink:0;"></ha-icon>
-          <span class="popup-label">${label}</span>
+        rows += `<div class="popup-row">${IC(icon)}<span class="popup-label">${label}</span>
           <select class="popup-select" data-entity="${entityId}" data-control="select">
-            ${opts.map(o => `<option value="${o}" ${o === stateStr ? 'selected' : ''}>${o}</option>`).join('')}
-          </select>
+            ${opts.map(o => `<option value="${o}" ${o===s?'selected':''}>${o}</option>`).join('')}
+          </select></div>`;
+
+      // ── Generic: entity has options → select ──
+      } else if (Array.isArray(st.attributes.options) && st.attributes.options.length) {
+        const opts = st.attributes.options;
+        rows += `<div class="popup-row">${IC(icon)}<span class="popup-label">${label}</span>
+          <select class="popup-select" data-entity="${entityId}" data-control="select">
+            ${opts.map(o => `<option value="${o}" ${o===s?'selected':''}>${o}</option>`).join('')}
+          </select></div>`;
+
+      // ── Generic: entity has min/max → slider ──
+      } else if (st.attributes.min !== undefined && st.attributes.max !== undefined) {
+        const min = st.attributes.min;
+        const max = st.attributes.max;
+        const step = st.attributes.step ?? 1;
+        const val = parseFloat(s);
+        const unit = st.attributes.unit_of_measurement || '';
+        rows += `<div class="popup-row popup-col">
+          <div class="popup-row-head">${IC(icon)}<span class="popup-label">${label}</span></div>
+          ${SLIDER(entityId, min, max, step, val, unit, 'number')}
         </div>`;
-      } else if (domain === 'cover') {
-        rows += `<div class="popup-row">
-          <ha-icon icon="${icon}" style="--mdc-icon-size:20px;color:rgba(255,255,255,0.6);flex-shrink:0;"></ha-icon>
+
+      // ── Generic: on/off → toggle ──
+      } else if (s === 'on' || s === 'off') {
+        rows += `<div class="popup-row">${IC(icon, isOn ? '#ffd54f' : 'rgba(255,255,255,0.45)')}
           <span class="popup-label">${label}</span>
-          <div class="btn-grp">
-            <button class="cov-btn" data-entity="${entityId}" data-control="cover-open">Auf</button>
-            <button class="cov-btn" data-entity="${entityId}" data-control="cover-stop">Stop</button>
-            <button class="cov-btn" data-entity="${entityId}" data-control="cover-close">Zu</button>
-          </div>
-        </div>`;
+          ${TOGGLE(entityId, isOn)}</div>`;
+
+      // ── Fallback: display + more-info ──
       } else {
-        const disp = stateStr + (st.attributes.unit_of_measurement ? ` ${st.attributes.unit_of_measurement}` : '');
-        rows += `<div class="popup-row">
-          <ha-icon icon="${icon}" style="--mdc-icon-size:20px;color:rgba(255,255,255,0.5);flex-shrink:0;"></ha-icon>
+        const disp = s + (st.attributes.unit_of_measurement ? ` ${st.attributes.unit_of_measurement}` : '');
+        rows += `<div class="popup-row">${IC(icon)}
           <span class="popup-label">${label}</span>
           <span class="popup-state-val">${disp}</span>
-        </div>`;
+          <button class="act-btn" data-entity="${entityId}" data-control="more-info" style="padding:4px 8px;">
+            <ha-icon icon="mdi:information-outline" style="--mdc-icon-size:16px;"></ha-icon>
+          </button></div>`;
       }
     });
 
@@ -335,8 +530,7 @@ class GlassButtonCard extends HTMLElement {
           position:relative;width:100%;max-width:480px;max-height:80vh;overflow-y:auto;
           background:rgba(28,28,38,0.96);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);
           border:1px solid rgba(255,255,255,0.14);border-radius:20px 20px 0 0;
-          padding:20px;box-sizing:border-box;
-          animation:gbcSlideUp .25s ease;
+          padding:20px;box-sizing:border-box;animation:gbcSlideUp .25s ease;
         }
         @keyframes gbcSlideUp{from{transform:translateY(100%);opacity:0}to{transform:translateY(0);opacity:1}}
         .popup-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;}
@@ -353,6 +547,8 @@ class GlassButtonCard extends HTMLElement {
         .popup-slider{width:100%;accent-color:#ffd54f;cursor:pointer;}
         .popup-select{background:rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.2);border-radius:8px;color:rgba(255,255,255,0.9);padding:6px 10px;font-size:13px;outline:none;max-width:160px;}
         .popup-select option{background:#2a2a3a;color:#fff;}
+        .popup-text-input{background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.2);border-radius:8px;color:rgba(255,255,255,0.9);padding:8px 10px;font-size:13px;outline:none;width:100%;box-sizing:border-box;}
+        .popup-text-input:focus{border-color:#ffd54f;}
         .toggle-sw{position:relative;display:inline-block;width:42px;height:24px;flex-shrink:0;}
         .toggle-sw input{opacity:0;width:0;height:0;position:absolute;}
         .tog-track{position:absolute;inset:0;background:rgba(255,255,255,0.15);border-radius:24px;cursor:pointer;transition:.3s;}
@@ -362,6 +558,8 @@ class GlassButtonCard extends HTMLElement {
         .btn-grp{display:flex;gap:6px;}
         .cov-btn{background:rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.2);border-radius:8px;color:rgba(255,255,255,0.85);padding:6px 12px;font-size:12px;cursor:pointer;transition:.2s;}
         .cov-btn:hover{background:rgba(255,255,255,0.2);}
+        .act-btn{background:rgba(255,213,79,0.15);border:1px solid rgba(255,213,79,0.35);border-radius:8px;color:#ffd54f;padding:6px 14px;font-size:12px;cursor:pointer;transition:.2s;display:flex;align-items:center;gap:4px;flex-shrink:0;}
+        .act-btn:hover{background:rgba(255,213,79,0.28);}
       </style>
       <div class="popup-backdrop" id="gbcBackdrop"></div>
       <div class="popup-sheet">
@@ -376,24 +574,38 @@ class GlassButtonCard extends HTMLElement {
     this._popupEl.querySelector('#gbcClose').addEventListener('click', () => this._closePopup());
     this._popupEl.querySelector('#gbcBackdrop').addEventListener('click', () => this._closePopup());
 
+    // Toggle (on/off + lock)
     this._popupEl.querySelectorAll('[data-control="toggle"]').forEach(cb => {
       cb.addEventListener('change', e => {
         const entityId = e.target.dataset.entity;
-        this._hass.callService('homeassistant', e.target.checked ? 'turn_on' : 'turn_off', { entity_id: entityId });
+        const domain = entityId.split('.')[0];
+        if (domain === 'lock') {
+          this._hass.callService('lock', e.target.checked ? 'lock' : 'unlock', { entity_id: entityId });
+        } else {
+          this._hass.callService('homeassistant', e.target.checked ? 'turn_on' : 'turn_off', { entity_id: entityId });
+        }
       });
     });
 
-    this._popupEl.querySelectorAll('[data-control="number"]').forEach(slider => {
+    // Generic slider
+    this._popupEl.querySelectorAll('[data-control="slider"]').forEach(slider => {
       slider.addEventListener('input', e => {
         const valEl = this._popupEl.querySelector(`[data-val="${e.target.dataset.entity}"]`);
-        const unit = e.target.dataset.unit;
+        const unit = e.target.dataset.unit || '';
         if (valEl) valEl.textContent = `${e.target.value}${unit ? ' '+unit : ''}`;
       });
       slider.addEventListener('change', e => {
         const entityId = e.target.dataset.entity;
         const domain = entityId.split('.')[0];
+        const t = e.target.dataset.type;
         const val = parseFloat(e.target.value);
-        if (domain === 'input_number') {
+        if (t === 'climate-temp') {
+          this._hass.callService('climate', 'set_temperature', { entity_id: entityId, temperature: val });
+        } else if (t === 'volume') {
+          this._hass.callService('media_player', 'volume_set', { entity_id: entityId, volume_level: val / 100 });
+        } else if (t === 'fan-pct') {
+          this._hass.callService('fan', 'set_percentage', { entity_id: entityId, percentage: val });
+        } else if (domain === 'input_number') {
           this._hass.callService('input_number', 'set_value', { entity_id: entityId, value: val });
         } else {
           this._hass.callService('number', 'set_value', { entity_id: entityId, value: val });
@@ -401,25 +613,90 @@ class GlassButtonCard extends HTMLElement {
       });
     });
 
+    // Select (input_select, select, climate hvac_mode)
     this._popupEl.querySelectorAll('[data-control="select"]').forEach(sel => {
       sel.addEventListener('change', e => {
         const entityId = e.target.dataset.entity;
         const domain = entityId.split('.')[0];
         if (domain === 'input_select') {
           this._hass.callService('input_select', 'select_option', { entity_id: entityId, option: e.target.value });
+        } else if (domain === 'climate') {
+          this._hass.callService('climate', 'set_hvac_mode', { entity_id: entityId, hvac_mode: e.target.value });
         } else {
           this._hass.callService('select', 'select_option', { entity_id: entityId, option: e.target.value });
         }
       });
     });
 
+    // Cover buttons
     this._popupEl.querySelectorAll('[data-control^="cover-"]').forEach(btn => {
       btn.addEventListener('click', e => {
-        const entityId = e.target.dataset.entity;
-        const ctrl = e.target.dataset.control;
+        const entityId = e.currentTarget.dataset.entity;
+        const ctrl = e.currentTarget.dataset.control;
         const svc = ctrl === 'cover-open' ? 'open_cover' : ctrl === 'cover-close' ? 'close_cover' : 'stop_cover';
         this._hass.callService('cover', svc, { entity_id: entityId });
       });
+    });
+
+    // Press / activate buttons (button, input_button, scene, script)
+    this._popupEl.querySelectorAll('[data-control="press"]').forEach(btn => {
+      btn.addEventListener('click', e => {
+        const entityId = e.currentTarget.dataset.entity;
+        const domain = entityId.split('.')[0];
+        const svcMap = { button:'press', input_button:'press', scene:'turn_on', script:'turn_on' };
+        this._hass.callService(domain, svcMap[domain] || 'turn_on', { entity_id: entityId });
+      });
+    });
+
+    // Media play/pause
+    this._popupEl.querySelectorAll('[data-control="media-play"]').forEach(btn => {
+      btn.addEventListener('click', e => {
+        const entityId = e.currentTarget.dataset.entity;
+        const st = this._hass.states[entityId];
+        const svc = st?.state === 'playing' ? 'media_pause' : 'media_play';
+        this._hass.callService('media_player', svc, { entity_id: entityId });
+      });
+    });
+
+    // Vacuum buttons
+    this._popupEl.querySelectorAll('[data-control^="vacuum-"]').forEach(btn => {
+      btn.addEventListener('click', e => {
+        const entityId = e.currentTarget.dataset.entity;
+        const ctrl = e.currentTarget.dataset.control;
+        const svc = { 'vacuum-start':'start', 'vacuum-pause':'pause', 'vacuum-dock':'return_to_base' }[ctrl];
+        if (svc) this._hass.callService('vacuum', svc, { entity_id: entityId });
+      });
+    });
+
+    // Timer buttons
+    this._popupEl.querySelectorAll('[data-control^="timer-"]').forEach(btn => {
+      btn.addEventListener('click', e => {
+        const entityId = e.currentTarget.dataset.entity;
+        const ctrl = e.currentTarget.dataset.control;
+        const svc = { 'timer-start':'start', 'timer-pause':'pause', 'timer-cancel':'cancel' }[ctrl];
+        if (svc) this._hass.callService('timer', svc, { entity_id: entityId });
+      });
+    });
+
+    // Automation trigger
+    this._popupEl.querySelectorAll('[data-control="automation-trigger"]').forEach(btn => {
+      btn.addEventListener('click', e => {
+        this._hass.callService('automation', 'trigger', { entity_id: e.currentTarget.dataset.entity });
+      });
+    });
+
+    // Input text
+    this._popupEl.querySelectorAll('[data-control="text"]').forEach(inp => {
+      const save = e => {
+        this._hass.callService('input_text', 'set_value', { entity_id: e.target.dataset.entity, value: e.target.value });
+      };
+      inp.addEventListener('change', save);
+      inp.addEventListener('keydown', e => { if (e.key === 'Enter') save(e); });
+    });
+
+    // More-info fallback
+    this._popupEl.querySelectorAll('[data-control="more-info"]').forEach(btn => {
+      btn.addEventListener('click', e => this._fireMoreInfo(e.currentTarget.dataset.entity));
     });
   }
 
