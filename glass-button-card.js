@@ -1,5 +1,5 @@
 // =====================================================================
-//  Glass Button Card v1.3.3
+//  Glass Button Card v1.3.4
 // =====================================================================
 
 const ACTIVE_STATES = [
@@ -994,95 +994,143 @@ class GlassButtonCardEditor extends HTMLElement {
   _buildEntityPicker(container, currentValue, onChange) {
     container.innerHTML = '';
     const hass = this._hass;
-    const entities = hass ? Object.keys(hass.states) : [];
 
-    const preferred = ['light','switch','sensor','binary_sensor','climate','cover',
-                       'media_player','input_boolean','vacuum','fan','lock','alarm_control_panel',
-                       'input_number','input_select','number','select','cover'];
-    const sorted = [
-      ...entities.filter(e => preferred.some(d => e.startsWith(d+'.'))),
-      ...entities.filter(e => !preferred.some(d => e.startsWith(d+'.'))),
-    ].sort((a,b) => {
-      const da = preferred.findIndex(d => a.startsWith(d+'.'));
-      const db = preferred.findIndex(d => b.startsWith(d+'.'));
-      if (da !== db) return da - db;
-      return a.localeCompare(b);
-    });
-
-    const wrapper = document.createElement('div');
-    wrapper.style.cssText = 'position:relative;';
-
-    const inputRow = document.createElement('div');
-    inputRow.style.cssText = 'display:flex;align-items:center;gap:8px;border:1px solid var(--divider-color,#e0e0e0);border-radius:8px;background:var(--card-background-color,#fff);padding:6px 11px;';
+    const btn = document.createElement('div');
+    btn.style.cssText = 'display:flex;align-items:center;gap:10px;border:1px solid var(--divider-color,#e0e0e0);border-radius:8px;background:var(--card-background-color,#fff);padding:8px 11px;cursor:pointer;transition:background .15s;';
 
     const iconEl = document.createElement('ha-icon');
     iconEl.icon = getEntityIcon(hass, currentValue);
     iconEl.style.cssText = '--mdc-icon-size:20px;color:var(--secondary-text-color,#727272);flex-shrink:0;';
 
-    const input = document.createElement('input');
-    input.type = 'text';
-    input.placeholder = 'Entität suchen (Name oder ID)…';
-    input.style.cssText = 'flex:1;border:none;outline:none;background:transparent;color:var(--primary-text-color,#212121);font-size:14px;';
-
-    if (currentValue && hass && hass.states[currentValue]) {
-      const fn = hass.states[currentValue].attributes.friendly_name;
-      input.value = fn || currentValue;
+    const textDiv = document.createElement('div');
+    textDiv.style.cssText = 'flex:1;min-width:0;overflow:hidden;';
+    if (currentValue && hass?.states[currentValue]) {
+      const fn = hass.states[currentValue].attributes.friendly_name || currentValue;
+      textDiv.innerHTML = `<div style="font-size:13px;font-weight:500;color:var(--primary-text-color,#212121);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${fn}</div><div style="font-size:11px;color:var(--secondary-text-color,#727272);">${currentValue}</div>`;
+    } else if (currentValue) {
+      textDiv.innerHTML = `<div style="font-size:13px;color:var(--secondary-text-color,#727272);">${currentValue}</div>`;
     } else {
-      input.value = currentValue || '';
+      textDiv.innerHTML = `<div style="font-size:13px;color:var(--secondary-text-color,#aaa);">Entität auswählen…</div>`;
     }
 
-    inputRow.appendChild(iconEl);
-    inputRow.appendChild(input);
+    const searchIcon = document.createElement('ha-icon');
+    searchIcon.icon = 'mdi:magnify';
+    searchIcon.style.cssText = '--mdc-icon-size:18px;color:var(--secondary-text-color,#aaa);flex-shrink:0;';
 
-    const dropdown = document.createElement('div');
-    dropdown.style.cssText = 'position:absolute;top:100%;left:0;right:0;max-height:220px;overflow-y:auto;background:var(--card-background-color,#fff);border:1px solid var(--divider-color,#e0e0e0);border-radius:8px;z-index:9999;box-shadow:0 4px 16px rgba(0,0,0,0.15);display:none;margin-top:2px;';
+    btn.appendChild(iconEl);
+    btn.appendChild(textDiv);
+    btn.appendChild(searchIcon);
 
-    const showDropdown = (filter='') => {
-      dropdown.innerHTML = '';
+    btn.addEventListener('mouseover', () => btn.style.background = 'var(--secondary-background-color,#f5f5f5)');
+    btn.addEventListener('mouseout',  () => btn.style.background = 'var(--card-background-color,#fff)');
+    btn.addEventListener('click', () => {
+      this._openEntityPickerModal(currentValue, newId => {
+        onChange(newId);
+        this._buildEntityPicker(container, newId, onChange);
+      });
+    });
+
+    container.appendChild(btn);
+  }
+
+  _openEntityPickerModal(currentValue, onChange) {
+    const hass = this._hass;
+    if (!hass) return;
+
+    const preferred = ['light','switch','binary_sensor','sensor','climate','cover',
+                       'media_player','input_boolean','vacuum','fan','lock','alarm_control_panel',
+                       'input_number','input_select','number','select','automation','script'];
+    const allEntities = Object.keys(hass.states).sort((a, b) => {
+      const da = preferred.findIndex(d => a.startsWith(d + '.'));
+      const db = preferred.findIndex(d => b.startsWith(d + '.'));
+      if (da !== db) { if (da === -1) return 1; if (db === -1) return -1; return da - db; }
+      const fa = hass.states[a]?.attributes.friendly_name || a;
+      const fb = hass.states[b]?.attributes.friendly_name || b;
+      return fa.localeCompare(fb);
+    });
+
+    const overlay = document.createElement('div');
+    overlay.style.cssText = 'position:fixed;inset:0;z-index:999999;background:rgba(0,0,0,0.55);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);display:flex;align-items:center;justify-content:center;padding:20px;box-sizing:border-box;';
+
+    const modal = document.createElement('div');
+    modal.style.cssText = 'background:var(--card-background-color,#fff);border-radius:16px;width:100%;max-width:500px;max-height:85vh;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 12px 40px rgba(0,0,0,0.35);';
+
+    const header = document.createElement('div');
+    header.style.cssText = 'display:flex;align-items:center;padding:16px 18px;border-bottom:1px solid var(--divider-color,#e0e0e0);';
+    header.innerHTML = `<span style="flex:1;font-size:15px;font-weight:600;color:var(--primary-text-color,#212121);">Entität auswählen</span>
+      <button id="epClose" style="background:none;border:none;cursor:pointer;color:var(--secondary-text-color,#727272);font-size:20px;line-height:1;padding:4px;">&#x2715;</button>`;
+
+    const searchWrap = document.createElement('div');
+    searchWrap.style.cssText = 'padding:12px 16px;border-bottom:1px solid var(--divider-color,#e0e0e0);';
+    const searchInput = document.createElement('input');
+    searchInput.type = 'text';
+    searchInput.placeholder = 'Name oder Entitäts-ID suchen…';
+    searchInput.style.cssText = 'width:100%;box-sizing:border-box;padding:10px 14px;border-radius:10px;border:1px solid var(--divider-color,#e0e0e0);background:var(--secondary-background-color,#f5f5f5);color:var(--primary-text-color,#212121);font-size:14px;outline:none;';
+    searchWrap.appendChild(searchInput);
+
+    const list = document.createElement('div');
+    list.style.cssText = 'overflow-y:auto;flex:1;';
+
+    const renderList = (filter = '') => {
+      list.innerHTML = '';
       const lower = filter.toLowerCase().trim();
-      const filtered = sorted.filter(e => {
+      const filtered = allEntities.filter(e => {
         if (!lower) return true;
         const fn = (hass.states[e]?.attributes.friendly_name || '').toLowerCase();
         return fn.includes(lower) || e.toLowerCase().includes(lower);
-      }).slice(0, 200);
+      }).slice(0, 300);
+
+      if (!filtered.length) {
+        list.innerHTML = `<div style="text-align:center;padding:32px;color:var(--secondary-text-color,#999);font-size:13px;">Keine Entitäten gefunden</div>`;
+        return;
+      }
 
       filtered.forEach(e => {
         const fn = hass.states[e]?.attributes.friendly_name || '';
-        const entityIcon = getEntityIcon(hass, e);
+        const isCurrent = e === currentValue;
         const item = document.createElement('div');
-        item.style.cssText = 'display:flex;align-items:center;gap:10px;padding:8px 12px;cursor:pointer;border-bottom:1px solid var(--divider-color,#f0f0f0);';
+        item.style.cssText = `display:flex;align-items:center;gap:12px;padding:10px 16px;cursor:pointer;border-bottom:1px solid var(--divider-color,#f0f0f0);${isCurrent ? 'background:rgba(3,169,244,0.07);' : ''}`;
 
-        const itemIcon = document.createElement('ha-icon');
-        itemIcon.icon = entityIcon;
-        itemIcon.style.cssText = '--mdc-icon-size:18px;color:var(--secondary-text-color,#727272);flex-shrink:0;';
+        const ic = document.createElement('ha-icon');
+        ic.icon = getEntityIcon(hass, e);
+        ic.style.cssText = '--mdc-icon-size:20px;color:var(--secondary-text-color,#727272);flex-shrink:0;';
 
-        const textDiv = document.createElement('div');
-        textDiv.innerHTML = `<div style="font-size:13px;font-weight:500;color:var(--primary-text-color,#212121)">${fn||e}</div><div style="font-size:11px;color:var(--secondary-text-color,#727272)">${e}</div>`;
+        const tx = document.createElement('div');
+        tx.style.cssText = 'flex:1;min-width:0;';
+        tx.innerHTML = `<div style="font-size:13px;font-weight:500;color:var(--primary-text-color,#212121);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${fn || e}</div>
+          <div style="font-size:11px;color:var(--secondary-text-color,#727272);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${e}</div>`;
 
-        item.appendChild(itemIcon);
-        item.appendChild(textDiv);
+        item.appendChild(ic);
+        item.appendChild(tx);
 
-        item.addEventListener('mousedown', ev => {
-          ev.preventDefault();
-          input.value = fn || e;
-          iconEl.icon = entityIcon;
-          dropdown.style.display = 'none';
-          onChange(e);
-        });
-        item.addEventListener('mouseover', () => item.style.background = 'var(--secondary-background-color,#f5f5f5)');
-        item.addEventListener('mouseout',  () => item.style.background = '');
-        dropdown.appendChild(item);
+        if (isCurrent) {
+          const chk = document.createElement('ha-icon');
+          chk.icon = 'mdi:check-circle';
+          chk.style.cssText = '--mdc-icon-size:18px;color:var(--primary-color,#03a9f4);flex-shrink:0;';
+          item.appendChild(chk);
+        }
+
+        item.addEventListener('mouseover', () => { if (!isCurrent) item.style.background = 'var(--secondary-background-color,#f5f5f5)'; });
+        item.addEventListener('mouseout',  () => { if (!isCurrent) item.style.background = ''; });
+        item.addEventListener('click', () => { close(); onChange(e); });
+        list.appendChild(item);
       });
-      dropdown.style.display = filtered.length ? 'block' : 'none';
     };
 
-    input.addEventListener('focus', () => showDropdown(input.value));
-    input.addEventListener('input', () => showDropdown(input.value));
-    input.addEventListener('blur',  () => setTimeout(() => { dropdown.style.display='none'; }, 150));
+    renderList();
+    searchInput.addEventListener('input', () => renderList(searchInput.value));
 
-    wrapper.appendChild(inputRow);
-    wrapper.appendChild(dropdown);
-    container.appendChild(wrapper);
+    const close = () => { if (document.body.contains(overlay)) document.body.removeChild(overlay); };
+    overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
+
+    modal.appendChild(header);
+    modal.appendChild(searchWrap);
+    modal.appendChild(list);
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
+
+    header.querySelector('#epClose').addEventListener('click', close);
+    setTimeout(() => searchInput.focus(), 60);
   }
 
   _buildIconPicker(container, label, currentValue, onChange) {
