@@ -1,3 +1,4 @@
+// @ts-check
 // =====================================================================
 //  Glass Button Card v1.3.5
 // =====================================================================
@@ -66,6 +67,7 @@ class GlassButtonCard extends HTMLElement {
     this._popupOpen = false;
   }
 
+  /** @param {LovelaceCardConfig} config */
   setConfig(config) {
     if (!config) throw new Error('Keine Konfiguration angegeben');
     this._config = {
@@ -79,6 +81,7 @@ class GlassButtonCard extends HTMLElement {
     };
   }
 
+  /** @param {HomeAssistant} hass */
   set hass(hass) {
     this._hass = hass;
     if (this._popupOpen) {
@@ -137,7 +140,7 @@ class GlassButtonCard extends HTMLElement {
     }
     const val = st.state;
     const unit = st.attributes.unit_of_measurement || '';
-    if (!isNaN(parseFloat(val)) && isFinite(val)) return unit ? `${val} ${unit}` : val;
+    if (!isNaN(parseFloat(val)) && isFinite(parseFloat(val))) return unit ? `${val} ${unit}` : val;
     const t = STATE_MAP_DE[val.toLowerCase ? val.toLowerCase() : val];
     return unit ? `${t||val} ${unit}` : (t||val);
   }
@@ -189,8 +192,7 @@ class GlassButtonCard extends HTMLElement {
 
   _fireMoreInfo(entityId) {
     if (!entityId) return;
-    const e = new Event('hass-more-info', { bubbles: true, composed: true });
-    e.detail = { entityId };
+    const e = new CustomEvent('hass-more-info', { bubbles: true, composed: true, detail: { entityId } });
     this.dispatchEvent(e);
   }
 
@@ -233,11 +235,11 @@ class GlassButtonCard extends HTMLElement {
       const domain = entityId.split('.')[0];
 
       // Toggle (any on/off entity)
-      const cb = this._popupEl.querySelector(`[data-entity="${entityId}"][data-control="toggle"]`);
+      const cb = /** @type {HTMLInputElement|null} */ (this._popupEl.querySelector(`[data-entity="${entityId}"][data-control="toggle"]`));
       if (cb) cb.checked = st.state === 'on' || (domain === 'lock' ? st.state === 'locked' : false);
 
       // Slider — data-type tells us which value to read
-      const slider = this._popupEl.querySelector(`[data-entity="${entityId}"][data-control="slider"]`);
+      const slider = /** @type {HTMLInputElement & HTMLElement|null} */ (this._popupEl.querySelector(`[data-entity="${entityId}"][data-control="slider"]`));
       if (slider) {
         const t = slider.dataset.type;
         let val;
@@ -262,7 +264,7 @@ class GlassButtonCard extends HTMLElement {
       }
 
       // Select (input_select, select, climate mode)
-      const sel = this._popupEl.querySelector(`[data-entity="${entityId}"][data-control="select"]`);
+      const sel = /** @type {HTMLInputElement|null} */ (this._popupEl.querySelector(`[data-entity="${entityId}"][data-control="select"]`));
       if (sel) sel.value = st.state;
 
       // Timer remaining
@@ -288,7 +290,7 @@ class GlassButtonCard extends HTMLElement {
         const stateColor = isOpen ? '#f44336' : 'rgba(255,255,255,0.45)';
         const stateSpan = bsRow.querySelector('.popup-state-val');
         if (stateSpan) stateSpan.textContent = stateLabel;
-        const iconEl = bsRow.querySelector('ha-icon');
+        const iconEl = /** @type {HTMLElement|null} */ (bsRow.querySelector('ha-icon'));
         if (iconEl) iconEl.style.color = stateColor;
       }
     });
@@ -604,12 +606,12 @@ class GlassButtonCard extends HTMLElement {
     // Toggle (on/off + lock)
     this._popupEl.querySelectorAll('[data-control="toggle"]').forEach(cb => {
       cb.addEventListener('change', e => {
-        const entityId = e.target.dataset.entity;
+        const entityId = (/** @type {HTMLElement} */ (e.target)).dataset.entity;
         const domain = entityId.split('.')[0];
         if (domain === 'lock') {
-          this._hass.callService('lock', e.target.checked ? 'lock' : 'unlock', { entity_id: entityId });
+          this._hass.callService('lock', (/** @type {HTMLInputElement} */ (e.target)).checked ? 'lock' : 'unlock', { entity_id: entityId });
         } else {
-          this._hass.callService('homeassistant', e.target.checked ? 'turn_on' : 'turn_off', { entity_id: entityId });
+          this._hass.callService('homeassistant', (/** @type {HTMLInputElement} */ (e.target)).checked ? 'turn_on' : 'turn_off', { entity_id: entityId });
         }
       });
     });
@@ -617,15 +619,15 @@ class GlassButtonCard extends HTMLElement {
     // Generic slider
     this._popupEl.querySelectorAll('[data-control="slider"]').forEach(slider => {
       slider.addEventListener('input', e => {
-        const valEl = this._popupEl.querySelector(`[data-val="${e.target.dataset.entity}"]`);
-        const unit = e.target.dataset.unit || '';
-        if (valEl) valEl.textContent = `${e.target.value}${unit ? ' '+unit : ''}`;
+        const valEl = this._popupEl.querySelector(`[data-val="${(/** @type {HTMLElement} */ (e.target)).dataset.entity}"]`);
+        const unit = (/** @type {HTMLElement} */ (e.target)).dataset.unit || '';
+        if (valEl) valEl.textContent = `${(/** @type {HTMLInputElement} */ (e.target)).value}${unit ? ' '+unit : ''}`;
       });
       slider.addEventListener('change', e => {
-        const entityId = e.target.dataset.entity;
+        const entityId = (/** @type {HTMLElement} */ (e.target)).dataset.entity;
         const domain = entityId.split('.')[0];
-        const t = e.target.dataset.type;
-        const val = parseFloat(e.target.value);
+        const t = (/** @type {HTMLElement} */ (e.target)).dataset.type;
+        const val = parseFloat((/** @type {HTMLInputElement} */ (e.target)).value);
         if (t === 'climate-temp') {
           this._hass.callService('climate', 'set_temperature', { entity_id: entityId, temperature: val });
         } else if (t === 'volume') {
@@ -643,14 +645,14 @@ class GlassButtonCard extends HTMLElement {
     // Select (input_select, select, climate hvac_mode)
     this._popupEl.querySelectorAll('[data-control="select"]').forEach(sel => {
       sel.addEventListener('change', e => {
-        const entityId = e.target.dataset.entity;
+        const entityId = (/** @type {HTMLElement} */ (e.target)).dataset.entity;
         const domain = entityId.split('.')[0];
         if (domain === 'input_select') {
-          this._hass.callService('input_select', 'select_option', { entity_id: entityId, option: e.target.value });
+          this._hass.callService('input_select', 'select_option', { entity_id: entityId, option: (/** @type {HTMLInputElement} */ (e.target)).value });
         } else if (domain === 'climate') {
-          this._hass.callService('climate', 'set_hvac_mode', { entity_id: entityId, hvac_mode: e.target.value });
+          this._hass.callService('climate', 'set_hvac_mode', { entity_id: entityId, hvac_mode: (/** @type {HTMLInputElement} */ (e.target)).value });
         } else {
-          this._hass.callService('select', 'select_option', { entity_id: entityId, option: e.target.value });
+          this._hass.callService('select', 'select_option', { entity_id: entityId, option: (/** @type {HTMLInputElement} */ (e.target)).value });
         }
       });
     });
@@ -658,8 +660,8 @@ class GlassButtonCard extends HTMLElement {
     // Cover buttons
     this._popupEl.querySelectorAll('[data-control^="cover-"]').forEach(btn => {
       btn.addEventListener('click', e => {
-        const entityId = e.currentTarget.dataset.entity;
-        const ctrl = e.currentTarget.dataset.control;
+        const entityId = (/** @type {HTMLElement} */ (e.currentTarget)).dataset.entity;
+        const ctrl = (/** @type {HTMLElement} */ (e.currentTarget)).dataset.control;
         const svc = ctrl === 'cover-open' ? 'open_cover' : ctrl === 'cover-close' ? 'close_cover' : 'stop_cover';
         this._hass.callService('cover', svc, { entity_id: entityId });
       });
@@ -668,7 +670,7 @@ class GlassButtonCard extends HTMLElement {
     // Press / activate buttons (button, input_button, scene, script)
     this._popupEl.querySelectorAll('[data-control="press"]').forEach(btn => {
       btn.addEventListener('click', e => {
-        const entityId = e.currentTarget.dataset.entity;
+        const entityId = (/** @type {HTMLElement} */ (e.currentTarget)).dataset.entity;
         const domain = entityId.split('.')[0];
         const svcMap = { button:'press', input_button:'press', scene:'turn_on', script:'turn_on' };
         this._hass.callService(domain, svcMap[domain] || 'turn_on', { entity_id: entityId });
@@ -678,7 +680,7 @@ class GlassButtonCard extends HTMLElement {
     // Media play/pause
     this._popupEl.querySelectorAll('[data-control="media-play"]').forEach(btn => {
       btn.addEventListener('click', e => {
-        const entityId = e.currentTarget.dataset.entity;
+        const entityId = (/** @type {HTMLElement} */ (e.currentTarget)).dataset.entity;
         const st = this._hass.states[entityId];
         const svc = st?.state === 'playing' ? 'media_pause' : 'media_play';
         this._hass.callService('media_player', svc, { entity_id: entityId });
@@ -688,8 +690,8 @@ class GlassButtonCard extends HTMLElement {
     // Vacuum buttons
     this._popupEl.querySelectorAll('[data-control^="vacuum-"]').forEach(btn => {
       btn.addEventListener('click', e => {
-        const entityId = e.currentTarget.dataset.entity;
-        const ctrl = e.currentTarget.dataset.control;
+        const entityId = (/** @type {HTMLElement} */ (e.currentTarget)).dataset.entity;
+        const ctrl = (/** @type {HTMLElement} */ (e.currentTarget)).dataset.control;
         const svc = { 'vacuum-start':'start', 'vacuum-pause':'pause', 'vacuum-dock':'return_to_base' }[ctrl];
         if (svc) this._hass.callService('vacuum', svc, { entity_id: entityId });
       });
@@ -698,8 +700,8 @@ class GlassButtonCard extends HTMLElement {
     // Timer buttons
     this._popupEl.querySelectorAll('[data-control^="timer-"]').forEach(btn => {
       btn.addEventListener('click', e => {
-        const entityId = e.currentTarget.dataset.entity;
-        const ctrl = e.currentTarget.dataset.control;
+        const entityId = (/** @type {HTMLElement} */ (e.currentTarget)).dataset.entity;
+        const ctrl = (/** @type {HTMLElement} */ (e.currentTarget)).dataset.control;
         const svc = { 'timer-start':'start', 'timer-pause':'pause', 'timer-cancel':'cancel' }[ctrl];
         if (svc) this._hass.callService('timer', svc, { entity_id: entityId });
       });
@@ -708,22 +710,22 @@ class GlassButtonCard extends HTMLElement {
     // Automation trigger
     this._popupEl.querySelectorAll('[data-control="automation-trigger"]').forEach(btn => {
       btn.addEventListener('click', e => {
-        this._hass.callService('automation', 'trigger', { entity_id: e.currentTarget.dataset.entity });
+        this._hass.callService('automation', 'trigger', { entity_id: (/** @type {HTMLElement} */ (e.currentTarget)).dataset.entity });
       });
     });
 
     // Input text
     this._popupEl.querySelectorAll('[data-control="text"]').forEach(inp => {
       const save = e => {
-        this._hass.callService('input_text', 'set_value', { entity_id: e.target.dataset.entity, value: e.target.value });
+        this._hass.callService('input_text', 'set_value', { entity_id: (/** @type {HTMLElement} */ (e.target)).dataset.entity, value: (/** @type {HTMLInputElement} */ (e.target)).value });
       };
       inp.addEventListener('change', save);
-      inp.addEventListener('keydown', e => { if (e.key === 'Enter') save(e); });
+      inp.addEventListener('keydown', e => { if ((/** @type {KeyboardEvent} */ (e)).key === 'Enter') save(e); });
     });
 
     // More-info fallback
     this._popupEl.querySelectorAll('[data-control="more-info"]').forEach(btn => {
-      btn.addEventListener('click', e => this._fireMoreInfo(e.currentTarget.dataset.entity));
+      btn.addEventListener('click', e => this._fireMoreInfo((/** @type {HTMLElement} */ (e.currentTarget)).dataset.entity));
     });
   }
 
@@ -962,8 +964,10 @@ class GlassButtonCardEditor extends HTMLElement {
     this._rendered = false;
   }
 
+  /** @param {LovelaceCardConfig} config */
   setConfig(config) { this._config = { ...config }; this._render(); }
 
+  /** @param {HomeAssistant} hass */
   set hass(hass) {
     this._hass = hass;
     if (!this._rendered) this._render();
@@ -993,13 +997,13 @@ class GlassButtonCardEditor extends HTMLElement {
 
   _buildEntityPicker(container, currentValue, onChange) {
     container.innerHTML = '';
-    const picker = document.createElement('ha-entity-picker');
+    const picker = /** @type {HaEntityPicker} */ (document.createElement('ha-entity-picker'));
     picker.hass = this._hass;
     picker.value = currentValue || '';
     picker.setAttribute('allow-custom-entity', '');
     picker.style.cssText = 'display:block;width:100%;';
     picker.addEventListener('value-changed', e => {
-      if (e.detail.value !== undefined) onChange(e.detail.value);
+      if ((/** @type {CustomEvent} */ (e)).detail.value !== undefined) onChange((/** @type {CustomEvent} */ (e)).detail.value);
     });
     container.appendChild(picker);
   }
@@ -1013,22 +1017,22 @@ class GlassButtonCardEditor extends HTMLElement {
 
     const isReal = customElements.get('ha-icon-picker') !== undefined;
     if (isReal) {
-      const ip = document.createElement('ha-icon-picker');
+      const ip = /** @type {HaIconPicker} */ (document.createElement('ha-icon-picker'));
       ip.value = currentValue;
-      ip.addEventListener('value-changed', e => onChange(e.detail.value));
+      ip.addEventListener('value-changed', e => onChange((/** @type {CustomEvent} */ (e)).detail.value));
       container.appendChild(ip);
     } else {
       const row = document.createElement('div');
       row.style.cssText = 'display:flex;align-items:center;gap:8px;';
-      const preview = document.createElement('ha-icon');
+      const preview = /** @type {HaIconElement} */ (document.createElement('ha-icon'));
       preview.icon = currentValue || 'mdi:help-circle';
       preview.style.cssText = '--mdc-icon-size:24px;color:var(--secondary-text-color,#727272);flex-shrink:0;';
       const inp = document.createElement('input');
       inp.type = 'text'; inp.value = currentValue || '';
       inp.placeholder = 'mdi:lightbulb';
       inp.style.cssText = 'flex:1;padding:9px 11px;border-radius:8px;border:1px solid var(--divider-color,#e0e0e0);background:var(--card-background-color,#fff);color:var(--primary-text-color,#212121);font-size:14px;outline:none;';
-      inp.addEventListener('input', e => { preview.icon = e.target.value || 'mdi:help-circle'; });
-      inp.addEventListener('change', e => onChange(e.target.value));
+      inp.addEventListener('input', e => { preview.icon = (/** @type {HTMLInputElement} */ (e.target)).value || 'mdi:help-circle'; });
+      inp.addEventListener('change', e => onChange((/** @type {HTMLInputElement} */ (e.target)).value));
       const hint = document.createElement('div');
       hint.style.cssText = 'font-size:11px;color:var(--secondary-text-color,#727272);margin-top:4px;';
       hint.textContent = 'Alle Icons: materialdesignicons.com';
@@ -1333,7 +1337,7 @@ class GlassButtonCardEditor extends HTMLElement {
     // Einfache Felder
     const on = (id, key, ev='change', fn=v=>v) => {
       const el = root.getElementById(id);
-      if (el) el.addEventListener(ev, e => this._update(key, fn(e.target.value)));
+      if (el) el.addEventListener(ev, e => this._update(key, fn((/** @type {HTMLInputElement} */ (e.target)).value)));
     };
     on('name', 'name');
     on('design', 'design', 'change', v => { setTimeout(()=>this._render(),50); return v; });
@@ -1346,8 +1350,8 @@ class GlassButtonCardEditor extends HTMLElement {
 
     const thrEl = root.getElementById('threshold');
     if (thrEl) thrEl.addEventListener('change', e => {
-      const v = e.target.value.trim();
-      const cfg = { ...this._config };
+      const v = (/** @type {HTMLInputElement} */ (e.target)).value.trim();
+      const cfg = /** @type {LovelaceCardConfig} */ ({ ...this._config });
       if (v === '') { delete cfg.threshold; } else { cfg.threshold = parseFloat(v); }
       this._config = cfg; this._emit();
     });
@@ -1356,9 +1360,9 @@ class GlassButtonCardEditor extends HTMLElement {
       const el = root.getElementById(id);
       if (!el) return;
       el.addEventListener('change', e => {
-        const v = e.target.value.trim();
+        const v = (/** @type {HTMLInputElement} */ (e.target)).value.trim();
         if (v === '') {
-          const cfg = { ...this._config };
+          const cfg = /** @type {LovelaceCardConfig} */ ({ ...this._config });
           delete cfg[key];
           this._config = cfg;
           this._emit();
@@ -1371,35 +1375,35 @@ class GlassButtonCardEditor extends HTMLElement {
     dimHandler('width', 'width');
 
     const followTheme = root.getElementById('follow_theme');
-    if (followTheme) followTheme.addEventListener('change', e => this._update('follow_theme', e.target.checked));
+    if (followTheme) followTheme.addEventListener('change', e => this._update('follow_theme', (/** @type {HTMLInputElement} */ (e.target)).checked));
 
     const glowCb = root.getElementById('glow');
     if (glowCb) glowCb.addEventListener('change', e => {
-      this._update('glow', e.target.checked);
-      root.getElementById('glowField').style.display = e.target.checked ? '' : 'none';
+      this._update('glow', (/** @type {HTMLInputElement} */ (e.target)).checked);
+      root.getElementById('glowField').style.display = (/** @type {HTMLInputElement} */ (e.target)).checked ? '' : 'none';
     });
     const glowRange = root.getElementById('glow_intensity');
     if (glowRange) glowRange.addEventListener('input', e => {
-      root.getElementById('glowVal').textContent = e.target.value;
-      this._update('glow_intensity', parseInt(e.target.value));
+      root.getElementById('glowVal').textContent = (/** @type {HTMLInputElement} */ (e.target)).value;
+      this._update('glow_intensity', parseInt((/** @type {HTMLInputElement} */ (e.target)).value));
     });
 
     const showName = root.getElementById('show_name');
-    if (showName) showName.addEventListener('change', e => this._update('show_name', e.target.checked));
+    if (showName) showName.addEventListener('change', e => this._update('show_name', (/** @type {HTMLInputElement} */ (e.target)).checked));
     const showState = root.getElementById('show_state');
-    if (showState) showState.addEventListener('change', e => this._update('show_state', e.target.checked));
+    if (showState) showState.addEventListener('change', e => this._update('show_state', (/** @type {HTMLInputElement} */ (e.target)).checked));
 
     // Popup controls
     const popupEnabledCb = root.getElementById('popup_enabled');
     if (popupEnabledCb) popupEnabledCb.addEventListener('change', e => {
-      this._config = { ...this._config, popup_enabled: e.target.checked };
+      this._config = { ...this._config, popup_enabled: (/** @type {HTMLInputElement} */ (e.target)).checked };
       this._emit();
       setTimeout(() => this._render(), 50);
     });
 
     const popupTriggerSel = root.getElementById('popup_trigger');
     if (popupTriggerSel) popupTriggerSel.addEventListener('change', e => {
-      this._config = { ...this._config, popup_trigger: e.target.value };
+      this._config = { ...this._config, popup_trigger: (/** @type {HTMLInputElement} */ (e.target)).value };
       this._emit();
       setTimeout(() => this._render(), 50);
     });
@@ -1414,23 +1418,23 @@ class GlassButtonCardEditor extends HTMLElement {
 
     // Tap action
     const tapType = root.getElementById('tap_type');
-    if (tapType) tapType.addEventListener('change', e => this._setActionType('tap_action', e.target.value));
+    if (tapType) tapType.addEventListener('change', e => this._setActionType('tap_action', (/** @type {HTMLInputElement} */ (e.target)).value));
     const navPath = root.getElementById('nav_path');
-    if (navPath) navPath.addEventListener('change', e => this._updateAction('tap_action','navigation_path',e.target.value));
+    if (navPath) navPath.addEventListener('change', e => this._updateAction('tap_action','navigation_path',(/** @type {HTMLInputElement} */ (e.target)).value));
     const svc = root.getElementById('svc');
-    if (svc) svc.addEventListener('change', e => this._updateAction('tap_action','service',e.target.value));
+    if (svc) svc.addEventListener('change', e => this._updateAction('tap_action','service',(/** @type {HTMLInputElement} */ (e.target)).value));
     const urlPath = root.getElementById('url_path');
-    if (urlPath) urlPath.addEventListener('change', e => this._updateAction('tap_action','url_path',e.target.value));
+    if (urlPath) urlPath.addEventListener('change', e => this._updateAction('tap_action','url_path',(/** @type {HTMLInputElement} */ (e.target)).value));
 
     // Hold action
     const holdType = root.getElementById('hold_type');
-    if (holdType) holdType.addEventListener('change', e => this._setActionType('hold_action', e.target.value));
+    if (holdType) holdType.addEventListener('change', e => this._setActionType('hold_action', (/** @type {HTMLInputElement} */ (e.target)).value));
     const holdNavPath = root.getElementById('hold_nav_path');
-    if (holdNavPath) holdNavPath.addEventListener('change', e => this._updateAction('hold_action','navigation_path',e.target.value));
+    if (holdNavPath) holdNavPath.addEventListener('change', e => this._updateAction('hold_action','navigation_path',(/** @type {HTMLInputElement} */ (e.target)).value));
     const holdSvc = root.getElementById('hold_svc');
-    if (holdSvc) holdSvc.addEventListener('change', e => this._updateAction('hold_action','service',e.target.value));
+    if (holdSvc) holdSvc.addEventListener('change', e => this._updateAction('hold_action','service',(/** @type {HTMLInputElement} */ (e.target)).value));
     const holdUrlPath = root.getElementById('hold_url_path');
-    if (holdUrlPath) holdUrlPath.addEventListener('change', e => this._updateAction('hold_action','url_path',e.target.value));
+    if (holdUrlPath) holdUrlPath.addEventListener('change', e => this._updateAction('hold_action','url_path',(/** @type {HTMLInputElement} */ (e.target)).value));
   }
 }
 
